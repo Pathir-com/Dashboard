@@ -52,6 +52,7 @@ import Clinic from './pages/Clinic';
 import Home from './pages/Home';
 import Internal from './pages/Internal';
 import Login from './pages/Login';
+import Onboarding from './pages/Onboarding';
 import __Layout from './Layout.jsx';
 
 
@@ -61,6 +62,7 @@ export const PAGES = {
     "Home": Home,
     "Internal": Internal,
     "Login": Login,
+    "Onboarding": Onboarding,
 }
 
 export const pagesConfig = {

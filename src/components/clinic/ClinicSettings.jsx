@@ -1,5 +1,6 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
+import { updatePractice as updateSupabasePractice } from '@/lib/supabaseData';
 import { Loader2, Building2, Users, PoundSterling, Star, Check } from 'lucide-react';
 import { toast } from 'sonner';
 
@@ -66,8 +67,15 @@ export default function ClinicSettings({ practice, onUpdate }) {
 
   const saveData = async (data) => {
     setIsSaving(true);
-    const updated = await base44.entities.Practice.update(practice.id, data);
-    onUpdate({ ...practice, ...updated, ...(updated.data || {}) });
+    try {
+      // Try Supabase first
+      const updated = await updateSupabasePractice(practice.id, data);
+      onUpdate({ ...practice, ...updated });
+    } catch {
+      // Fall back to localStorage
+      const updated = await base44.entities.Practice.update(practice.id, data);
+      onUpdate({ ...practice, ...updated, ...(updated.data || {}) });
+    }
     setSavedAt(new Date());
     setIsSaving(false);
   };

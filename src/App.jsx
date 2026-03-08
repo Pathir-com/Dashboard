@@ -1,13 +1,14 @@
 import { Toaster } from "@/components/ui/toaster"
-import { QueryClientProvider } from '@tanstack/react-query'
+import { QueryClientProvider, useQuery } from '@tanstack/react-query'
 import { queryClientInstance } from '@/lib/query-client'
 import NavigationTracker from '@/lib/NavigationTracker'
 import { pagesConfig } from './pages.config'
 import { BrowserRouter as Router, Route, Routes, Navigate } from 'react-router-dom';
 import PageNotFound from './lib/PageNotFound';
 import { AuthProvider, useAuth } from '@/lib/AuthContext';
-import UserNotRegisteredError from '@/components/UserNotRegisteredError';
 import Login from '@/pages/Login';
+import Onboarding from '@/pages/Onboarding';
+import { getMyPractice } from '@/lib/supabaseData';
 
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
@@ -17,7 +18,7 @@ const LayoutWrapper = ({ children, currentPageName }) => Layout ?
   <Layout currentPageName={currentPageName}>{children}</Layout>
   : <>{children}</>;
 
-const ProtectedRoute = ({ children }) => {
+const ProtectedRoute = ({ children, adminOnly = false }) => {
   const { user, isLoadingAuth } = useAuth();
 
   if (isLoadingAuth) {
@@ -33,6 +34,31 @@ const ProtectedRoute = ({ children }) => {
   }
 
   return children;
+};
+
+// Redirects user to their clinic if they have one, or to onboarding if they don't
+const DashboardRedirect = () => {
+  const { user } = useAuth();
+
+  const { data: practice, isLoading } = useQuery({
+    queryKey: ['my-practice', user?.id],
+    queryFn: getMyPractice,
+    enabled: !!user,
+  });
+
+  if (isLoading) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
+
+  if (!practice) {
+    return <Navigate to="/onboarding" replace />;
+  }
+
+  return <Navigate to={`/Clinic?id=${practice.id}`} replace />;
 };
 
 const AuthenticatedApp = () => {
@@ -56,30 +82,47 @@ const AuthenticatedApp = () => {
         </LayoutWrapper>
       } />
 
-      {/* Protected routes */}
+      {/* Protected: onboarding */}
+      <Route path="/onboarding" element={
+        <ProtectedRoute>
+          <Onboarding />
+        </ProtectedRoute>
+      } />
+
+      {/* Protected: dashboard redirect (checks if user has a practice) */}
       <Route path="/" element={
         <ProtectedRoute>
-          <LayoutWrapper currentPageName={mainPageKey}>
-            <MainPage />
+          <DashboardRedirect />
+        </ProtectedRoute>
+      } />
+
+      {/* Protected: clinic dashboard */}
+      <Route path="/Clinic" element={
+        <ProtectedRoute>
+          <LayoutWrapper currentPageName="Clinic">
+            <Pages.Clinic />
           </LayoutWrapper>
         </ProtectedRoute>
       } />
-      {Object.entries(Pages).map(([path, Page]) => {
-        if (path === 'Calculator') return null; // already handled above
-        return (
-          <Route
-            key={path}
-            path={`/${path}`}
-            element={
-              <ProtectedRoute>
-                <LayoutWrapper currentPageName={path}>
-                  <Page />
-                </LayoutWrapper>
-              </ProtectedRoute>
-            }
-          />
-        );
-      })}
+
+      {/* Protected: practice detail view */}
+      <Route path="/Home" element={
+        <ProtectedRoute>
+          <LayoutWrapper currentPageName="Home">
+            <Pages.Home />
+          </LayoutWrapper>
+        </ProtectedRoute>
+      } />
+
+      {/* Protected: admin only */}
+      <Route path="/Internal" element={
+        <ProtectedRoute adminOnly>
+          <LayoutWrapper currentPageName="Internal">
+            <Pages.Internal />
+          </LayoutWrapper>
+        </ProtectedRoute>
+      } />
+
       <Route path="*" element={<PageNotFound />} />
     </Routes>
   );
@@ -87,7 +130,6 @@ const AuthenticatedApp = () => {
 
 
 function App() {
-
   return (
     <AuthProvider>
       <QueryClientProvider client={queryClientInstance}>

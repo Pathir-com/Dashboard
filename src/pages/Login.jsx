@@ -10,11 +10,12 @@ export default function Login() {
   const [clinicName, setClinicName] = useState('');
   const [fullName, setFullName] = useState('');
   const [error, setError] = useState('');
+  const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Already logged in — redirect to dashboard
+  // Already logged in — redirect to dashboard (will check for practice and route accordingly)
   if (user) {
-    return <Navigate to="/Internal" replace />;
+    return <Navigate to="/" replace />;
   }
 
   const handleSubmit = async (e) => {
@@ -29,12 +30,13 @@ export default function Login() {
       } else {
         if (!fullName.trim()) { setError('Full name is required'); setLoading(false); return; }
         if (!clinicName.trim()) { setError('Clinic name is required'); setLoading(false); return; }
-        const { error } = await signUp(email, password, { fullName, clinicName });
+        const { data, error } = await signUp(email, password, { fullName, clinicName });
         if (error) {
           setError(error.message);
-        } else {
-          setError('');
-          // signUp may auto-login or require email confirmation depending on Supabase settings
+        } else if (data?.user && !data.session) {
+          // Email confirmation required
+          setSuccess('Check your email for a confirmation link, then sign in.');
+          setMode('login');
         }
       }
     } catch (err) {
@@ -114,6 +116,10 @@ export default function Login() {
 
             {error && (
               <p className="text-sm text-red-600 bg-red-50 rounded-lg px-3 py-2">{error}</p>
+            )}
+
+            {success && (
+              <p className="text-sm text-emerald-700 bg-emerald-50 rounded-lg px-3 py-2">{success}</p>
             )}
 
             <button

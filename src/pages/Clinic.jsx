@@ -1,8 +1,10 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
+import { useAuth } from '@/lib/AuthContext';
+import { getPractice as getSupabasePractice, listEnquiries as listSupabaseEnquiries, updateEnquiry as updateSupabaseEnquiry } from '@/lib/supabaseData';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
@@ -31,44 +33,42 @@ export default function Clinic() {
   const [isLoadingPractice, setIsLoadingPractice] = useState(true);
   const queryClient = useQueryClient();
   const previousCountRef = useRef(0);
+  const { user: authUser, logout } = useAuth();
+  const navigate = useNavigate();
 
-  // Get current user (optional - only for admin features)
-  useEffect(() => {
-    const fetchUser = async () => {
-      try {
-        const isAuth = await base44.auth.isAuthenticated();
-        if (isAuth) {
-          const user = await base44.auth.me();
-          setCurrentUser(user);
-        }
-      } catch (err) {
-        // User not authenticated - that's fine
-      }
-    };
-    fetchUser();
-  }, []);
-
-  // Get practice from URL parameter
+  // Get practice from URL parameter — try Supabase first, fall back to localStorage
   useEffect(() => {
     const urlParams = new URLSearchParams(window.location.search);
     const practiceId = urlParams.get('id');
-    
+
     if (!practiceId) {
       setIsLoadingPractice(false);
       return;
     }
-    
-    base44.entities.Practice.list()
-      .then(practices => {
-        const practice = practices.find(p => p.id === practiceId);
+
+    // Try Supabase first
+    getSupabasePractice(practiceId)
+      .then(practice => {
         if (practice) {
           setSelectedPractice(practice);
+          setCurrentUser({ role: 'clinic_owner' });
         }
         setIsLoadingPractice(false);
       })
-      .catch(err => {
-        console.error('Failed to load practice:', err);
-        setIsLoadingPractice(false);
+      .catch(() => {
+        // Fall back to localStorage (demo data)
+        base44.entities.Practice.list()
+          .then(practices => {
+            const practice = practices.find(p => p.id === practiceId);
+            if (practice) {
+              setSelectedPractice(practice);
+            }
+            setIsLoadingPractice(false);
+          })
+          .catch(err => {
+            console.error('Failed to load practice:', err);
+            setIsLoadingPractice(false);
+          });
       });
   }, []);
 
@@ -76,6 +76,15 @@ export default function Clinic() {
     queryKey: ['enquiries', selectedPractice?.id],
     queryFn: async () => {
       if (!selectedPractice?.id) return [];
+      try {
+        // Try Supabase first
+        const supabaseEnquiries = await listSupabaseEnquiries(selectedPractice.id, '-created_at');
+        if (supabaseEnquiries && supabaseEnquiries.length >= 0) {
+          return supabaseEnquiries.map(e => ({ ...e, created_date: e.created_date || e.created_at }));
+        }
+      } catch {
+        // Fall back to localStorage
+      }
       const rawEnquiries = await base44.entities.Enquiry.filter({ practice_id: selectedPractice.id }, '-created_date');
       return rawEnquiries.map(e => ({
         ...e,
@@ -86,7 +95,13 @@ export default function Clinic() {
   });
 
   const updateMutation = useMutation({
-    mutationFn: ({ id, data }) => base44.entities.Enquiry.update(id, data),
+    mutationFn: async ({ id, data }) => {
+      try {
+        return await updateSupabaseEnquiry(id, data);
+      } catch {
+        return base44.entities.Enquiry.update(id, data);
+      }
+    },
     onSuccess: (updatedEntity) => {
       // Flatten the returned entity before it updates the cache
       const flattened = {
