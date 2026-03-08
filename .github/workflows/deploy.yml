@@ -17,6 +17,8 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+        env:
+          VITE_BASE_PATH: /demo-site/
 
       - name: Deploy to public repo
         uses: peaceiris/actions-gh-pages@v4
