@@ -1,13 +1,15 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { base44 } from '@/api/base44Client';
 import { updatePractice as updateSupabasePractice } from '@/lib/supabaseData';
-import { Loader2, Building2, Users, PoundSterling, Star, Check } from 'lucide-react';
+import { Loader2, Building2, Users, PoundSterling, Star, Check, Plug } from 'lucide-react';
 import { toast } from 'sonner';
+import { assignTwilioNumber, releaseTwilioNumber } from '@/lib/twilioService';
 
 import ClinicDetailsTab from './settings/ClinicDetailsTab';
 import TeamTab from './settings/TeamTab';
 import PricingTab from './settings/PricingTab';
 import PracticeInfoTab from './settings/PracticeInfoTab';
+import IntegrationsTab from './settings/IntegrationsTab';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const DEFAULT_HOURS = DAYS.map(day => ({
@@ -18,10 +20,11 @@ const DEFAULT_HOURS = DAYS.map(day => ({
 }));
 
 const TABS = [
-  { id: 'clinic',   label: 'Clinic',       icon: Building2 },
-  { id: 'team',     label: 'Team',         icon: Users },
-  { id: 'pricing',  label: 'Pricing',      icon: PoundSterling },
-  { id: 'info',     label: 'Practice Info',icon: Star },
+  { id: 'clinic',       label: 'Clinic',        icon: Building2 },
+  { id: 'team',         label: 'Team',           icon: Users },
+  { id: 'pricing',      label: 'Pricing',        icon: PoundSterling },
+  { id: 'info',         label: 'Practice Info',  icon: Star },
+  { id: 'integrations', label: 'Integrations',   icon: Plug },
 ];
 
 export default function ClinicSettings({ practice, onUpdate }) {
@@ -64,6 +67,7 @@ export default function ClinicSettings({ practice, onUpdate }) {
 
   const isFirstRender = useRef(true);
   const [savedAt, setSavedAt] = useState(null);
+  const [isAssigningNumber, setIsAssigningNumber] = useState(false);
 
   const saveData = async (data) => {
     setIsSaving(true);
@@ -154,6 +158,38 @@ export default function ClinicSettings({ practice, onUpdate }) {
               usps={usps} setUsps={setUsps}
               practicePlan={practicePlan} setPracticePlan={setPracticePlan}
               financeDocUrl={financeDocUrl} setFinanceDocUrl={setFinanceDocUrl}
+            />
+          )}
+          {activeTab === 'integrations' && (
+            <IntegrationsTab
+              practice={practice}
+              integrations={integrations}
+              setIntegrations={setIntegrations}
+              isAssigningNumber={isAssigningNumber}
+              onAssignNumber={async () => {
+                setIsAssigningNumber(true);
+                try {
+                  const result = await assignTwilioNumber(practice.id);
+                  onUpdate({ ...practice, twilio_phone_number: result.phone_number });
+                  toast.success(`Voice AI enabled: ${result.phone_number}`);
+                } catch (err) {
+                  toast.error(err.message || 'Failed to assign number');
+                } finally {
+                  setIsAssigningNumber(false);
+                }
+              }}
+              onReleaseNumber={async () => {
+                setIsAssigningNumber(true);
+                try {
+                  await releaseTwilioNumber(practice.id);
+                  onUpdate({ ...practice, twilio_phone_number: '' });
+                  toast.success('Voice AI disabled');
+                } catch (err) {
+                  toast.error(err.message || 'Failed to release number');
+                } finally {
+                  setIsAssigningNumber(false);
+                }
+              }}
             />
           )}
         </div>

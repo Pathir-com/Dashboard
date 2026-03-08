@@ -89,10 +89,30 @@ export async function createPractice(practiceData) {
   return data;
 }
 
+// Only send columns that exist in the Supabase practices table
+const PRACTICE_COLUMNS = new Set([
+  'name', 'address', 'phone', 'email', 'website', 'practice_type',
+  'opening_hours', 'holiday_hours', 'practitioners', 'price_list',
+  'integrations', 'usps', 'practice_plan', 'chatbase_agent_id',
+  'elevenlabs_agent_id', 'twilio_phone_number', 'stripe_subscription_id',
+  'onboarding_completed', 'pear_dental', 'finance_document_url',
+]);
+
+function filterPracticeFields(obj) {
+  const filtered = {};
+  for (const [key, value] of Object.entries(obj)) {
+    if (PRACTICE_COLUMNS.has(key)) {
+      filtered[key] = value;
+    }
+  }
+  return filtered;
+}
+
 export async function updatePractice(id, updates) {
+  const safeUpdates = filterPracticeFields(updates);
   const { data, error } = await supabase
     .from('practices')
-    .update(updates)
+    .update(safeUpdates)
     .eq('id', id)
     .select()
     .single();
