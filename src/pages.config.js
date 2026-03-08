@@ -51,6 +51,7 @@ import Calculator from './pages/Calculator';
 import Clinic from './pages/Clinic';
 import Home from './pages/Home';
 import Internal from './pages/Internal';
+import Login from './pages/Login';
 import __Layout from './Layout.jsx';
 
 
@@ -59,6 +60,7 @@ export const PAGES = {
     "Clinic": Clinic,
     "Home": Home,
     "Internal": Internal,
+    "Login": Login,
 }
 
 export const pagesConfig = {

@@ -9,7 +9,8 @@ import { Dialog, DialogContent, DialogHeader, DialogTitle, DialogTrigger } from 
 import { Building2, Plus, Pencil, Trash2, Lock, Loader2, LogOut, Copy, ExternalLink } from 'lucide-react';
 import { toast } from 'sonner';
 import { createPageUrl } from '@/utils';
-import { Link } from 'react-router-dom';
+import { Link, useNavigate } from 'react-router-dom';
+import { useAuth } from '@/lib/AuthContext';
 
 const ADMIN_PASSWORD = "E0+2HK'~3:r";
 const ADMIN_EMAIL = "admin2025@pathir.com";
@@ -185,9 +186,14 @@ export default function Internal() {
     }
   };
 
-  const handleLogout = () => {
+  const { logout: supabaseLogout, user: authUser } = useAuth();
+  const navigate = useNavigate();
+
+  const handleLogout = async () => {
     setIsAuthenticated(false);
     sessionStorage.removeItem('practiceManagementAuth');
+    await supabaseLogout();
+    navigate('/login');
     toast.success('Logged out successfully');
   };
 
@@ -325,7 +331,9 @@ export default function Internal() {
         <div className="flex flex-col md:flex-row md:justify-between md:items-center gap-4 mb-8">
           <div>
             <h1 className="text-2xl md:text-3xl font-bold text-slate-900">Practice Management</h1>
-            <p className="text-slate-500 mt-2">Manage all dental practices</p>
+            <p className="text-slate-500 mt-2">
+              {authUser?.email ? `Signed in as ${authUser.email}` : 'Manage all dental practices'}
+            </p>
           </div>
           
           <div className="flex gap-2 flex-shrink-0">
