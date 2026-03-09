@@ -58,7 +58,7 @@ export default function IntegrationsTab({
     if (!sk.startsWith('sk_test_') && !sk.startsWith('sk_live_') && !sk.startsWith('rk_test_') && !sk.startsWith('rk_live_')) { toast.error('Secret key must start with sk_test_ or sk_live_'); return; }
     const skMode = sk.includes('_test_') ? 'test' : 'live';
     setIntegrations({ ...integrations, stripe_publishable_key: pk, stripe_secret_key: sk, stripe_connected: true, stripe_mode: skMode });
-    toast.success(`Stripe connected (${pkMode} mode)`); setExpanded(null);
+    toast.success(`Stripe connected (${skMode} mode)`); setExpanded(null);
   }
 
   function handleStripeDisconnect() {
