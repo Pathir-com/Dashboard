@@ -27,6 +27,9 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+        env:
+          VITE_SUPABASE_URL: https://amxcposgqlmgapzoopze.supabase.co
+          VITE_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFteGNwb3NncWxtZ2Fwem9vcHplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwMDU3MTksImV4cCI6MjA4ODU4MTcxOX0.neGu5-OeiQVoNDV-ABZJ09fuR_BJwHvXavfyrHZorOk
       - run: cp dist/index.html dist/404.html
       - run: echo "app.pathir.com" > dist/CNAME
 
