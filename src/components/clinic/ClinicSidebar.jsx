@@ -1,7 +1,7 @@
 import React from 'react';
-import { Inbox, Settings, CalendarDays } from 'lucide-react';
+import { Inbox, Settings, CalendarDays, LogOut } from 'lucide-react';
 
-export default function ClinicSidebar({ currentView, onNavigate }) {
+export default function ClinicSidebar({ currentView, onNavigate, onLogout }) {
   return (
     <div className="w-14 shrink-0 min-h-screen bg-white border-r border-slate-100 flex flex-col items-center py-5 sticky top-0 h-screen z-10">
       {/* Logo */}
@@ -40,17 +40,28 @@ export default function ClinicSidebar({ currentView, onNavigate }) {
       </div>
 
       {/* Settings at bottom */}
-      <button
-        onClick={() => onNavigate('settings')}
-        title="Settings"
-        className={`p-2.5 rounded-lg transition-colors ${
-          currentView === 'settings'
-            ? 'bg-slate-900 text-white'
-            : 'text-slate-400 hover:text-slate-700 hover:bg-slate-50'
-        }`}
-      >
-        <Settings className="w-5 h-5" />
-      </button>
+      <div className="flex flex-col items-center gap-1">
+        <button
+          onClick={() => onNavigate('settings')}
+          title="Settings"
+          className={`p-2.5 rounded-lg transition-colors ${
+            currentView === 'settings'
+              ? 'bg-slate-900 text-white'
+              : 'text-slate-400 hover:text-slate-700 hover:bg-slate-50'
+          }`}
+        >
+          <Settings className="w-5 h-5" />
+        </button>
+        {onLogout && (
+          <button
+            onClick={onLogout}
+            title="Sign out"
+            className="p-2.5 rounded-lg transition-colors text-slate-400 hover:text-red-500 hover:bg-red-50"
+          >
+            <LogOut className="w-5 h-5" />
+          </button>
+        )}
+      </div>
     </div>
   );
 }

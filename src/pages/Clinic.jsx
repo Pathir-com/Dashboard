@@ -8,7 +8,7 @@ import { getPractice as getSupabasePractice, listEnquiries as listSupabaseEnquir
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { Phone, MessageCircle, AlertTriangle, CheckCircle2, Loader2, Bell, Calendar as CalendarIcon, ArrowLeft, ChevronLeft, ChevronRight, Mail, Facebook, Instagram } from 'lucide-react';
+import { Phone, MessageCircle, AlertTriangle, CheckCircle2, Loader2, Bell, Calendar as CalendarIcon, ArrowLeft, ChevronLeft, ChevronRight, Mail, Facebook, Instagram, LogOut } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format, isSameDay, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isToday, addMonths, subMonths, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
 import { toast } from 'sonner';
@@ -256,7 +256,7 @@ export default function Clinic() {
 
   return (
     <div className="min-h-screen bg-slate-50 flex">
-      <ClinicSidebar currentView={currentView} onNavigate={setCurrentView} />
+      <ClinicSidebar currentView={currentView} onNavigate={setCurrentView} onLogout={logout} />
 
       <div className="flex-1">
         {currentView === 'settings' ? (
