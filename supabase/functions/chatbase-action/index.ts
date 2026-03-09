@@ -127,6 +127,8 @@ Deno.serve(async (req) => {
 
         context.returning_patient = true;
         context.patient_name = contact.name;
+        if (contact.email) context.patient_email = contact.email;
+        if (contact.phone) context.patient_phone = contact.phone;
 
         // Full conversation details so Poppy can reference specifics
         // deno-lint-ignore no-explicit-any
