@@ -52,15 +52,16 @@ export default function IntegrationsTab({
 
   // ── Handlers ──
   async function handleStripeConnect() {
-    if (!stripeKey.startsWith('pk_')) { toast.error('Publishable key must start with pk_test_ or pk_live_'); return; }
-    if (!stripeSecret.startsWith('sk_') && !stripeSecret.startsWith('rk_')) { toast.error('Secret key must start with sk_test_ or sk_live_'); return; }
-    setIsVerifying(true);
-    try {
-      const res = await fetch('https://api.stripe.com/v1/balance', { headers: { Authorization: `Bearer ${stripeSecret}` } });
-      if (!res.ok) { const err = await res.json(); throw new Error(err.error?.message || 'Invalid Stripe credentials'); }
-      setIntegrations({ ...integrations, stripe_publishable_key: stripeKey, stripe_secret_key: stripeSecret, stripe_connected: true });
-      toast.success('Stripe connected'); setExpanded(null);
-    } catch (err) { toast.error(err.message); } finally { setIsVerifying(false); }
+    const pk = stripeKey.trim();
+    const sk = stripeSecret.trim();
+    if (!pk.startsWith('pk_test_') && !pk.startsWith('pk_live_')) { toast.error('Publishable key must start with pk_test_ or pk_live_'); return; }
+    if (!sk.startsWith('sk_test_') && !sk.startsWith('sk_live_') && !sk.startsWith('rk_test_') && !sk.startsWith('rk_live_')) { toast.error('Secret key must start with sk_test_ or sk_live_'); return; }
+    // Check both keys are same mode (test/live)
+    const pkMode = pk.includes('_test_') ? 'test' : 'live';
+    const skMode = sk.includes('_test_') ? 'test' : 'live';
+    if (pkMode !== skMode) { toast.error(`Mismatch: publishable key is ${pkMode} but secret key is ${skMode}. Both must match.`); return; }
+    setIntegrations({ ...integrations, stripe_publishable_key: pk, stripe_secret_key: sk, stripe_connected: true, stripe_mode: pkMode });
+    toast.success(`Stripe connected (${pkMode} mode)`); setExpanded(null);
   }
 
   function handleStripeDisconnect() {
@@ -131,7 +132,7 @@ export default function IntegrationsTab({
       key: 'stripe',
       icon: <CreditCard className="w-4 h-4 text-[#635BFF]" />,
       label: 'Stripe',
-      desc: connected.stripe ? 'Connected — payments and deposits active' : 'Accept payments, deposits, and payment links',
+      desc: connected.stripe ? `Connected (${integrations.stripe_mode || 'test'}) — payments and deposits active` : 'Accept payments, deposits, and payment links',
       type: 'connect',
       isConnected: connected.stripe,
     },
