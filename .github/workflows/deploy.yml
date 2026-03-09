@@ -27,7 +27,11 @@ jobs:
 
       - run: npm ci
       - run: npm run build
+        env:
+          VITE_BASE_PATH: /Dashboard/
       - run: cp dist/index.html dist/404.html
+      # Add CNAME for custom domain (uncomment when DNS is pointed)
+      # - run: echo "app.pathir.com" > dist/CNAME
 
       - uses: actions/configure-pages@v5
 
