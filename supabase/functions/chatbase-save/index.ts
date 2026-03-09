@@ -60,6 +60,7 @@ Deno.serve(async (req) => {
     const summary = body.summary || url.searchParams.get("summary") || "";
     const appointmentType = body.appointmentType || url.searchParams.get("appointmentType") || "";
     const isUrgent = body.isUrgent === "true" || body.isUrgent === true;
+    const transcript = body.transcript || url.searchParams.get("transcript") || "";
 
     if (!practiceId) {
       return new Response(JSON.stringify({ message: "practiceId required" }), {
@@ -95,20 +96,54 @@ Deno.serve(async (req) => {
     const message = summary || `Web chat: ${appointmentType || "general enquiry"}`;
 
     if (recent) {
-      // Update existing
+      // Update existing — include transcript if provided
+      const updateData: Record<string, unknown> = {
+        message,
+        patient_name: name || contact.name,
+        selected_service: appointmentType || null,
+      };
+      if (transcript) {
+        const conv: Array<{ role: string; message: string; timestamp: string }> = [];
+        const lines = transcript.split("\n").filter((l: string) => l.trim());
+        for (const line of lines) {
+          const match = line.match(/^(Poppy|Patient|Agent|User|Me|Johannis[^:]*)\s*:\s*(.+)/i);
+          if (match) {
+            const role = /poppy|agent/i.test(match[1]) ? "agent" : "patient";
+            conv.push({ role, message: match[2].trim(), timestamp: new Date().toISOString() });
+          } else if (line.trim()) {
+            conv.push({ role: "patient", message: line.trim(), timestamp: new Date().toISOString() });
+          }
+        }
+        if (conv.length > 0) updateData.conversation = conv;
+      }
       await adminClient
         .from("enquiries")
-        .update({
-          message,
-          patient_name: name || contact.name,
-          selected_service: appointmentType || null,
-        })
+        .update(updateData)
         .eq("id", recent.id);
 
       return new Response(
         JSON.stringify({ message: "Conversation updated", enquiryId: recent.id }),
         { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
+    }
+
+    // Parse transcript into conversation array
+    // Transcript comes as text like "Patient: Hi\nPoppy: Hello\nPatient: I need..."
+    const conversation: Array<{ role: string; message: string; timestamp: string }> = [];
+    if (transcript) {
+      const lines = transcript.split("\n").filter((l: string) => l.trim());
+      for (const line of lines) {
+        const match = line.match(/^(Poppy|Patient|Agent|User|Me|Johannis[^:]*)\s*:\s*(.+)/i);
+        if (match) {
+          const role = /poppy|agent/i.test(match[1]) ? "agent" : "patient";
+          conversation.push({ role, message: match[2].trim(), timestamp: new Date().toISOString() });
+        } else if (line.trim()) {
+          conversation.push({ role: "patient", message: line.trim(), timestamp: new Date().toISOString() });
+        }
+      }
+    }
+    if (conversation.length === 0) {
+      conversation.push({ role: "agent", message: `Summary: ${message}`, timestamp: new Date().toISOString() });
     }
 
     // Create new enquiry
@@ -124,9 +159,7 @@ Deno.serve(async (req) => {
         is_urgent: isUrgent || false,
         is_completed: false,
         selected_service: appointmentType || null,
-        conversation: [
-          { role: "agent", message: `Booking summary: ${message}`, timestamp: new Date().toISOString() },
-        ],
+        conversation,
       })
       .select()
       .single();
