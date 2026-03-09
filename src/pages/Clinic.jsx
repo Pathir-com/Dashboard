@@ -8,7 +8,7 @@ import { getPractice as getSupabasePractice, listEnquiries as listSupabaseEnquir
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { Phone, MessageCircle, AlertTriangle, CheckCircle2, Loader2, Bell, Calendar as CalendarIcon, ArrowLeft, ChevronLeft, ChevronRight } from 'lucide-react';
+import { Phone, MessageCircle, AlertTriangle, CheckCircle2, Loader2, Bell, Calendar as CalendarIcon, ArrowLeft, ChevronLeft, ChevronRight, Mail, Facebook, Instagram } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format, isSameDay, startOfMonth, endOfMonth, eachDayOfInterval, isSameMonth, isToday, addMonths, subMonths, isWithinInterval, startOfDay, endOfDay } from 'date-fns';
 import { toast } from 'sonner';
@@ -461,15 +461,17 @@ export default function Clinic() {
                       <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
                         <span className="flex items-center gap-1.5">
                           {enquiry.source === 'phone' ? (
-                            <>
-                              <Phone className="w-3.5 h-3.5" />
-                              Phone
-                            </>
+                            <><Phone className="w-3.5 h-3.5" /> Phone</>
+                          ) : enquiry.source === 'sms' ? (
+                            <><MessageCircle className="w-3.5 h-3.5" /> SMS</>
+                          ) : enquiry.source === 'email' ? (
+                            <><Mail className="w-3.5 h-3.5" /> Email</>
+                          ) : enquiry.source === 'facebook' ? (
+                            <><Facebook className="w-3.5 h-3.5 text-[#1877F2]" /> Messenger</>
+                          ) : enquiry.source === 'instagram' ? (
+                            <><Instagram className="w-3.5 h-3.5 text-[#E1306C]" /> Instagram</>
                           ) : (
-                            <>
-                              <MessageCircle className="w-3.5 h-3.5" />
-                              Website
-                            </>
+                            <><MessageCircle className="w-3.5 h-3.5" /> Website</>
                           )}
                         </span>
 

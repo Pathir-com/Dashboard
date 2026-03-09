@@ -40,10 +40,11 @@ const ProtectedRoute = ({ children, adminOnly = false }) => {
 const DashboardRedirect = () => {
   const { user } = useAuth();
 
-  const { data: practice, isLoading } = useQuery({
+  const { data: practice, isLoading, error } = useQuery({
     queryKey: ['my-practice', user?.id],
     queryFn: getMyPractice,
     enabled: !!user,
+    retry: false,
   });
 
   if (isLoading) {
@@ -52,6 +53,10 @@ const DashboardRedirect = () => {
         <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
       </div>
     );
+  }
+
+  if (error) {
+    console.error('Failed to load practice:', error);
   }
 
   if (!practice) {

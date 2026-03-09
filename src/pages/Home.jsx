@@ -7,7 +7,7 @@ import { Checkbox } from '@/components/ui/checkbox';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
-import { Phone, MessageCircle, AlertTriangle, CheckCircle2, Loader2, Bell, Calendar as CalendarIcon, ArrowLeft } from 'lucide-react';
+import { Phone, MessageCircle, AlertTriangle, CheckCircle2, Loader2, Bell, Calendar as CalendarIcon, ArrowLeft, Mail, Facebook, Instagram } from 'lucide-react';
 import { motion, AnimatePresence } from 'framer-motion';
 import { format } from 'date-fns';
 import { toast } from 'sonner';
@@ -431,15 +431,17 @@ export default function Home() {
                         {/* Source indicator */}
                         <span className="flex items-center gap-1.5">
                           {enquiry.source === 'phone' ? (
-                            <>
-                              <Phone className="w-3.5 h-3.5" />
-                              Phone
-                            </>
+                            <><Phone className="w-3.5 h-3.5" /> Phone</>
+                          ) : enquiry.source === 'sms' ? (
+                            <><MessageCircle className="w-3.5 h-3.5" /> SMS</>
+                          ) : enquiry.source === 'email' ? (
+                            <><Mail className="w-3.5 h-3.5" /> Email</>
+                          ) : enquiry.source === 'facebook' ? (
+                            <><Facebook className="w-3.5 h-3.5 text-[#1877F2]" /> Messenger</>
+                          ) : enquiry.source === 'instagram' ? (
+                            <><Instagram className="w-3.5 h-3.5 text-[#E1306C]" /> Instagram</>
                           ) : (
-                            <>
-                              <MessageCircle className="w-3.5 h-3.5" />
-                              Website
-                            </>
+                            <><MessageCircle className="w-3.5 h-3.5" /> Website</>
                           )}
                         </span>
 
@@ -586,15 +588,17 @@ export default function Home() {
                       <div className="flex items-center gap-4 text-xs text-slate-400">
                         <span className="flex items-center gap-1.5">
                           {enquiry.source === 'phone' ? (
-                            <>
-                              <Phone className="w-3.5 h-3.5" />
-                              Phone
-                            </>
+                            <><Phone className="w-3.5 h-3.5" /> Phone</>
+                          ) : enquiry.source === 'sms' ? (
+                            <><MessageCircle className="w-3.5 h-3.5" /> SMS</>
+                          ) : enquiry.source === 'email' ? (
+                            <><Mail className="w-3.5 h-3.5" /> Email</>
+                          ) : enquiry.source === 'facebook' ? (
+                            <><Facebook className="w-3.5 h-3.5 text-[#1877F2]" /> Messenger</>
+                          ) : enquiry.source === 'instagram' ? (
+                            <><Instagram className="w-3.5 h-3.5 text-[#E1306C]" /> Instagram</>
                           ) : (
-                            <>
-                              <MessageCircle className="w-3.5 h-3.5" />
-                              Website
-                            </>
+                            <><MessageCircle className="w-3.5 h-3.5" /> Website</>
                           )}
                         </span>
 

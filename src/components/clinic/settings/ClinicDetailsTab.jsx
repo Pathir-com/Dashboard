@@ -2,13 +2,13 @@ import React from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Phone, MessageSquare, Globe, Link2, CheckCircle2, Facebook, Instagram, Mail } from 'lucide-react';
+import { Link2, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import HolidayHours from './HolidayHours';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-export default function ClinicDetailsTab({ details, setDetails, hours, setHours, holidayHours, setHolidayHours, integrations, setIntegrations, pearDental, setPearDental, practiceType, setPracticeType }) {
+export default function ClinicDetailsTab({ details, setDetails, hours, setHours, holidayHours, setHolidayHours, pearDental, setPearDental, practiceType, setPracticeType }) {
   const updateHour = (index, field, value) => {
     setHours(prev => prev.map((h, i) => i === index ? { ...h, [field]: value } : h));
   };
@@ -45,31 +45,11 @@ export default function ClinicDetailsTab({ details, setDetails, hours, setHours,
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label className="text-slate-600">Phone Number</Label>
-              {integrations.phone_enabled && details.phone ? (
-                <div className="mt-1.5 flex h-9 w-full items-center rounded-md border border-slate-100 bg-slate-50 px-3 text-sm text-slate-700 gap-2">
-                  <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  {details.phone}
-                </div>
-              ) : (
-                <div className="mt-1.5 flex h-9 w-full items-center rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 text-sm text-slate-400 gap-2">
-                  <Phone className="w-3.5 h-3.5 shrink-0" />
-                  No phone number connected yet
-                </div>
-              )}
+              <Input value={details.phone} onChange={e => setDetails({ ...details, phone: e.target.value })} placeholder="020 1234 5678" className="mt-1.5" />
             </div>
             <div>
               <Label className="text-slate-600">Email</Label>
-              {integrations.email_enabled && details.email ? (
-                <div className="mt-1.5 flex h-9 w-full items-center rounded-md border border-slate-100 bg-slate-50 px-3 text-sm text-slate-700 gap-2">
-                  <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  {details.email}
-                </div>
-              ) : (
-                <div className="mt-1.5 flex h-9 w-full items-center rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 text-sm text-slate-400 gap-2">
-                  <Mail className="w-3.5 h-3.5 shrink-0" />
-                  No email address connected yet
-                </div>
-              )}
+              <Input value={details.email} onChange={e => setDetails({ ...details, email: e.target.value })} placeholder="hello@yourclinic.co.uk" className="mt-1.5" />
             </div>
           </div>
           <div>
@@ -102,32 +82,6 @@ export default function ClinicDetailsTab({ details, setDetails, hours, setHours,
       </section>
 
       <HolidayHours holidayHours={holidayHours} setHolidayHours={setHolidayHours} />
-
-      {/* Integrations */}
-      <section>
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Integrations</h2>
-        <div className="bg-white rounded-xl border border-slate-100 divide-y divide-slate-50">
-          {[
-            { key: 'phone_enabled', icon: <Phone className="w-4 h-4 text-slate-500" />, label: 'Phone Agent', description: 'AI handles incoming calls' },
-            { key: 'sms_enabled', icon: <MessageSquare className="w-4 h-4 text-slate-500" />, label: 'SMS', description: 'Send appointment confirmations via SMS' },
-            { key: 'web_chat_enabled', icon: <Globe className="w-4 h-4 text-slate-500" />, label: 'Web Chat', description: 'AI chat widget on your website' },
-            { key: 'facebook_enabled', icon: <Facebook className="w-4 h-4 text-[#1877F2]" />, label: 'Facebook Messenger', description: 'AI handles Facebook Messenger enquiries' },
-            { key: 'instagram_enabled', icon: <Instagram className="w-4 h-4 text-[#E1306C]" />, label: 'Instagram DMs', description: 'AI handles Instagram Direct Message enquiries' },
-            { key: 'email_enabled', icon: <Mail className="w-4 h-4 text-slate-500" />, label: 'Email', description: 'AI handles incoming email enquiries' },
-          ].map(({ key, icon, label, description }) => (
-            <div key={key} className="flex items-center justify-between px-6 py-4">
-              <div className="flex items-center gap-3">
-                {icon}
-                <div>
-                  <p className="text-sm font-medium text-slate-900">{label}</p>
-                  <p className="text-xs text-slate-400">{description}</p>
-                </div>
-              </div>
-              <Switch checked={integrations[key]} onCheckedChange={val => setIntegrations({ ...integrations, [key]: val })} />
-            </div>
-          ))}
-        </div>
-      </section>
 
       {/* Pearl Dental */}
       <section>

@@ -3,7 +3,7 @@ import { base44 } from '@/api/base44Client';
 import { updatePractice as updateSupabasePractice } from '@/lib/supabaseData';
 import { Loader2, Building2, Users, PoundSterling, Star, Check, Plug } from 'lucide-react';
 import { toast } from 'sonner';
-import { assignTwilioNumber, releaseTwilioNumber } from '@/lib/twilioService';
+import { assignTwilioNumber } from '@/lib/twilioService';
 
 import ClinicDetailsTab from './settings/ClinicDetailsTab';
 import TeamTab from './settings/TeamTab';
@@ -142,7 +142,6 @@ export default function ClinicSettings({ practice, onUpdate }) {
             details={details} setDetails={setDetails}
             hours={hours} setHours={setHours}
             holidayHours={holidayHours} setHolidayHours={setHolidayHours}
-            integrations={integrations} setIntegrations={setIntegrations}
             pearDental={pearDental} setPearDental={setPearDental}
             practiceType={practiceType} setPracticeType={setPracticeType}
           />
@@ -170,22 +169,10 @@ export default function ClinicSettings({ practice, onUpdate }) {
                 setIsAssigningNumber(true);
                 try {
                   const result = await assignTwilioNumber(practice.id);
-                  onUpdate({ ...practice, twilio_phone_number: result.phone_number });
-                  toast.success(`Voice AI enabled: ${result.phone_number}`);
+                  onUpdate({ ...practice, twilio_phone_number: result.phoneNumber });
+                  toast.success(`Voice AI enabled: ${result.phoneNumber}`);
                 } catch (err) {
                   toast.error(err.message || 'Failed to assign number');
-                } finally {
-                  setIsAssigningNumber(false);
-                }
-              }}
-              onReleaseNumber={async () => {
-                setIsAssigningNumber(true);
-                try {
-                  await releaseTwilioNumber(practice.id);
-                  onUpdate({ ...practice, twilio_phone_number: '' });
-                  toast.success('Voice AI disabled');
-                } catch (err) {
-                  toast.error(err.message || 'Failed to release number');
                 } finally {
                   setIsAssigningNumber(false);
                 }

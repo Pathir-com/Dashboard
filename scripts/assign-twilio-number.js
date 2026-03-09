@@ -11,9 +11,9 @@
 
 import 'dotenv/config';
 
-const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID || 'ACab534af8deffb17eba0d530ac601ea39';
-const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN || 'c4ee7e386ab9c61cc2ab18e23493210e';
-const SUPABASE_URL = process.env.VITE_SUPABASE_URL || 'https://amxcposgqlmgapzoopze.supabase.co';
+const TWILIO_SID = process.env.TWILIO_ACCOUNT_SID;
+const TWILIO_TOKEN = process.env.TWILIO_AUTH_TOKEN;
+const SUPABASE_URL = process.env.VITE_SUPABASE_URL;
 const SUPABASE_KEY = process.env.SUPABASE_SERVICE_ROLE_KEY || process.env.VITE_SUPABASE_ANON_KEY;
 
 // VAPI webhook URL — calls route here
@@ -203,15 +203,17 @@ async function findPooledNumber(areaCode) {
       .filter(Boolean)
   );
 
-  // Find unassigned numbers matching the area code
-  const e164Prefix = '+44' + areaCode.replace(/^0/, '');
-  const pooled = allNumbers.filter(n =>
-    !assignedNumbers.has(n.phone_number) &&
-    n.phone_number.startsWith(e164Prefix)
-  );
+  // Find unassigned numbers matching the area code (if provided)
+  if (areaCode) {
+    const e164Prefix = '+44' + areaCode.replace(/^0/, '');
+    const pooled = allNumbers.filter(n =>
+      !assignedNumbers.has(n.phone_number) &&
+      n.phone_number.startsWith(e164Prefix)
+    );
 
-  if (pooled.length > 0) {
-    return pooled[0];
+    if (pooled.length > 0) {
+      return pooled[0];
+    }
   }
 
   // Try any unassigned number
@@ -247,20 +249,19 @@ async function assignNumber(practiceId) {
 
   // 3. Check pool first (reuse unassigned numbers)
   let number = null;
-  if (match) {
-    console.log(`  Checking pool for ${match.region} numbers...`);
-    const pooled = await findPooledNumber(match.areaCode);
-    if (pooled) {
-      console.log(`  Found pooled number: ${pooled.phone_number}`);
-      number = pooled.phone_number;
+  const poolAreaCode = match ? match.areaCode : null;
+  console.log(`  Checking pool for ${match ? match.region : 'any available'} numbers...`);
+  const pooled = await findPooledNumber(poolAreaCode);
+  if (pooled) {
+    console.log(`  Found pooled number: ${pooled.phone_number}`);
+    number = pooled.phone_number;
 
-      // Update webhook URL in case it was changed
-      await twilioPost(`/IncomingPhoneNumbers/${pooled.sid}.json`, {
-        VoiceUrl: VAPI_WEBHOOK_URL,
-        VoiceMethod: 'POST',
-        FriendlyName: `Pathir - ${practice.name}`,
-      });
-    }
+    // Update webhook URL in case it was changed
+    await twilioPost(`/IncomingPhoneNumbers/${pooled.sid}.json`, {
+      VoiceUrl: VAPI_WEBHOOK_URL,
+      VoiceMethod: 'POST',
+      FriendlyName: `Pathir - ${practice.name}`,
+    });
   }
 
   // 4. If no pooled number, search and buy
