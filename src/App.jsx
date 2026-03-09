@@ -10,6 +10,30 @@ import Login from '@/pages/Login';
 import Onboarding from '@/pages/Onboarding';
 import { getMyPractice } from '@/lib/supabaseData';
 
+const PaymentResult = ({ status }) => {
+  const params = new URLSearchParams(window.location.search);
+  const ref = params.get('ref');
+  const success = status === 'success';
+  return (
+    <div className="min-h-screen flex items-center justify-center bg-slate-50 p-6">
+      <div className="bg-white rounded-2xl shadow-sm border border-slate-100 p-10 max-w-md w-full text-center">
+        <div className={`w-16 h-16 rounded-full mx-auto mb-6 flex items-center justify-center ${success ? 'bg-green-50' : 'bg-slate-100'}`}>
+          <span className="text-3xl">{success ? '\u2713' : '\u2717'}</span>
+        </div>
+        <h1 className="text-2xl font-semibold text-slate-900 mb-2">
+          {success ? 'Payment successful' : 'Payment cancelled'}
+        </h1>
+        <p className="text-slate-500 mb-4">
+          {success
+            ? `Thank you! Your payment has been received.${ref ? ` Reference: ${ref}` : ''}`
+            : 'No payment was taken. You can close this page or try again using the link in your email.'}
+        </p>
+        {success && <p className="text-sm text-slate-400">You can close this page now.</p>}
+      </div>
+    </div>
+  );
+};
+
 const { Pages, Layout, mainPage } = pagesConfig;
 const mainPageKey = mainPage ?? Object.keys(Pages)[0];
 const MainPage = mainPageKey ? Pages[mainPageKey] : <></>;
@@ -81,6 +105,8 @@ const AuthenticatedApp = () => {
     <Routes>
       {/* Public routes */}
       <Route path="/login" element={<Login />} />
+      <Route path="/payment/success" element={<PaymentResult status="success" />} />
+      <Route path="/payment/cancel" element={<PaymentResult status="cancel" />} />
       <Route path="/Calculator" element={
         <LayoutWrapper currentPageName="Calculator">
           <Pages.Calculator />
