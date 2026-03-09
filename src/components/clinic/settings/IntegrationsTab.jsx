@@ -56,11 +56,8 @@ export default function IntegrationsTab({
     const sk = stripeSecret.trim();
     if (!pk.startsWith('pk_test_') && !pk.startsWith('pk_live_')) { toast.error('Publishable key must start with pk_test_ or pk_live_'); return; }
     if (!sk.startsWith('sk_test_') && !sk.startsWith('sk_live_') && !sk.startsWith('rk_test_') && !sk.startsWith('rk_live_')) { toast.error('Secret key must start with sk_test_ or sk_live_'); return; }
-    // Check both keys are same mode (test/live)
-    const pkMode = pk.includes('_test_') ? 'test' : 'live';
     const skMode = sk.includes('_test_') ? 'test' : 'live';
-    if (pkMode !== skMode) { toast.error(`Mismatch: publishable key is ${pkMode} but secret key is ${skMode}. Both must match.`); return; }
-    setIntegrations({ ...integrations, stripe_publishable_key: pk, stripe_secret_key: sk, stripe_connected: true, stripe_mode: pkMode });
+    setIntegrations({ ...integrations, stripe_publishable_key: pk, stripe_secret_key: sk, stripe_connected: true, stripe_mode: skMode });
     toast.success(`Stripe connected (${pkMode} mode)`); setExpanded(null);
   }
 
