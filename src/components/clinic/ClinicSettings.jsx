@@ -42,9 +42,10 @@ export default function ClinicSettings({ practice, onUpdate }) {
   const [practiceType, setPracticeType] = useState(practice.practice_type || '');
   const [hours, setHours] = useState(practice.opening_hours?.length ? practice.opening_hours : DEFAULT_HOURS);
   const [integrations, setIntegrations] = useState({
-    phone_enabled: practice.integrations?.phone_enabled || false,
-    sms_enabled: practice.integrations?.sms_enabled || false,
-    web_chat_enabled: practice.integrations?.web_chat_enabled || false,
+    phone_enabled: false,
+    sms_enabled: false,
+    web_chat_enabled: false,
+    ...practice.integrations,
   });
   const [holidayHours, setHolidayHours] = useState(practice.holiday_hours || []);
 
