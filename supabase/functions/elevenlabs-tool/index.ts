@@ -206,16 +206,33 @@ async function handleLookupCallerPhone(db: any, args: any) {
   if (!caller_phone) return { ...base, found: false, message: "No caller phone number available." };
 
   const contact = await findContactByPhone(db, practice.id, caller_phone);
+
+  // Create an enquiry for every inbound call so it appears in the dashboard
+  const normalised = normalizePhone(caller_phone);
+  const enquiryRow = {
+    practice_id: practice.id,
+    patient_name: contact?.name || "Unknown Caller",
+    phone_number: normalised,
+    message: "Incoming phone call",
+    source: "phone",
+    is_urgent: false,
+    is_completed: false,
+    contact_id: contact?.id || null,
+  };
+  const { data: enquiry } = await db
+    .from("enquiries").insert(enquiryRow).select("id").single();
+  const enquiryId = enquiry?.id || null;
+
   if (contact) {
     return {
       ...base, found: true, contact_id: contact.id, contact_name: contact.name,
       contact_phone: contact.phone, contact_email: contact.email,
       contact_dob: contact.date_of_birth, contact_address: contact.address,
-      contact_postcode: contact.postcode,
+      contact_postcode: contact.postcode, enquiry_id: enquiryId,
       message: `Account found for this phone number. Patient name on file: ${contact.name}.`,
     };
   }
-  return { ...base, found: false, message: "No account linked to this phone number." };
+  return { ...base, found: false, enquiry_id: enquiryId, message: "No account linked to this phone number." };
 }
 
 // deno-lint-ignore no-explicit-any
