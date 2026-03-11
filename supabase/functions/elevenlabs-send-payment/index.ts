@@ -20,8 +20,39 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const body = await req.json();
-    const { phone, email, amount_pence, patient_name, description } = body;
+    // Accept JSON, form-encoded, or query params (Chatbase may send any format)
+    // deno-lint-ignore no-explicit-any
+    let body: Record<string, any> = {};
+    const contentType = req.headers.get("content-type") || "";
+    const url = new URL(req.url);
+
+    if (req.method === "GET") {
+      // All params from query string
+      for (const [k, v] of url.searchParams) body[k] = v;
+    } else {
+      const rawBody = await req.text();
+      if (rawBody) {
+        if (contentType.includes("json")) {
+          body = JSON.parse(rawBody);
+        } else {
+          // Form-encoded fallback
+          for (const pair of rawBody.split("&")) {
+            const [key, value] = pair.split("=");
+            if (key) body[decodeURIComponent(key)] = decodeURIComponent(value || "");
+          }
+        }
+      }
+      // Also merge query params (Chatbase sometimes puts vars there)
+      for (const [k, v] of url.searchParams) {
+        if (v && !body[k]) body[k] = v;
+      }
+    }
+
+    const phone = body.phone || "";
+    const email = body.email || "";
+    const amount_pence = body.amount_pence;
+    const patient_name = body.patient_name || "";
+    const description = body.description || "";
 
     if (!phone && !email) {
       return new Response(JSON.stringify({ success: false, message: "Need phone or email to find practice and send link" }), {
@@ -83,9 +114,16 @@ Deno.serve(async (req) => {
     const ref = Array.from({ length: 4 }, () => chars[Math.floor(Math.random() * chars.length)]).join("");
     const shortRef = `${practice.name?.slice(0, 4).toUpperCase().replace(/[^A-Z]/g, "X") || "PTHR"}-${ref}`;
 
-    const amountPence = amount_pence || 7350; // default to £73.50 if not specified
+    // Use amount from request, or fall back to contact's database balance
+    const amountPence = amount_pence || contact.balance_pence || 0;
+    if (amountPence <= 0) {
+      return new Response(JSON.stringify({
+        success: false,
+        message: "No amount was specified and there is no outstanding balance on file for this patient. Please confirm the amount before sending a payment link.",
+      }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
+    }
     const amountFormatted = `£${(amountPence / 100).toFixed(2)}`;
-    const desc = description || "Outstanding balance payment";
+    const desc = description || contact.balance_description || "Outstanding balance payment";
 
     // Create Stripe Checkout Session
     const stripeParams = new URLSearchParams();
