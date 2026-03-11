@@ -68,15 +68,31 @@ export default function IntegrationsTab({
     if (!pk.startsWith('pk_test_') && !pk.startsWith('pk_live_')) { toast.error('Publishable key must start with pk_test_ or pk_live_'); return; }
     if (!sk.startsWith('sk_test_') && !sk.startsWith('sk_live_') && !sk.startsWith('rk_test_') && !sk.startsWith('rk_live_')) { toast.error('Secret key must start with sk_test_ or sk_live_'); return; }
     const skMode = sk.includes('_test_') ? 'test' : 'live';
-    setIntegrations({ ...integrations, stripe_publishable_key: pk, stripe_secret_key: sk, stripe_connected: true, stripe_mode: skMode });
-    toast.success(`Stripe connected (${skMode} mode)`); setExpanded(null);
+    const updated = { ...integrations, stripe_publishable_key: pk, stripe_secret_key: sk, stripe_connected: true, stripe_mode: skMode };
+
+    try {
+      const { error } = await supabase.from('practices').update({ integrations: updated }).eq('id', practice?.id);
+      if (error) throw error;
+      setIntegrations(updated);
+      toast.success(`Stripe connected (${skMode} mode)`); setExpanded(null);
+    } catch (err) {
+      console.error('Failed to save Stripe keys:', err);
+      toast.error('Failed to save Stripe keys');
+    }
   }
 
-  function handleStripeDisconnect() {
+  async function handleStripeDisconnect() {
     const { stripe_publishable_key, stripe_secret_key, stripe_connected, stripe_mode, ...rest } = integrations;
-    setIntegrations(rest);
-    setStripeKey(''); setStripeSecret('');
-    toast.success('Stripe disconnected'); setExpanded(null);
+    try {
+      const { error } = await supabase.from('practices').update({ integrations: rest }).eq('id', practice?.id);
+      if (error) throw error;
+      setIntegrations(rest);
+      setStripeKey(''); setStripeSecret('');
+      toast.success('Stripe disconnected'); setExpanded(null);
+    } catch (err) {
+      console.error('Failed to disconnect Stripe:', err);
+      toast.error('Failed to disconnect Stripe');
+    }
   }
 
   async function handleFacebookConnect() {
@@ -109,25 +125,32 @@ export default function IntegrationsTab({
     if (!email || !email.includes('@')) { toast.error('Please enter a valid email address'); return; }
     setIsSendingCode(true);
     try {
-      // Generate a 6-digit code and store it on the practice
       const code = String(Math.floor(100000 + Math.random() * 900000));
-      // Save the code + email to the practice (not visible to user)
-      setIntegrations({
+      // Save the code + email to integrations (auto-saves to DB via parent)
+      const updatedIntegrations = {
         ...integrations,
         email_verification_code: code,
         email_verification_email: email,
         email_verification_sent_at: new Date().toISOString(),
-      });
-      // Send the verification email via our SMTP function
-      await supabase.functions.invoke('send-email', {
+      };
+      setIntegrations(updatedIntegrations);
+
+      // Also write directly to DB to ensure it's persisted before the user enters the code
+      await supabase.from('practices').update({
+        integrations: updatedIntegrations,
+      }).eq('id', practice?.id);
+
+      // Send the verification email
+      const { error: sendError } = await supabase.functions.invoke('send-email', {
         body: {
           to: email,
-          type: 'new_patient_welcome', // reuse template for now
+          type: 'email_verification',
           practice_id: practice?.id,
-          data: { patient_name: `Verification code: ${code}` },
-          subject: `${practice?.name || 'Pathir'} — Email Verification Code: ${code}`,
+          data: { code },
         },
       });
+      if (sendError) throw sendError;
+
       toast.success(`Verification code sent to ${email}`);
       setEmailStep('code');
     } catch (err) {
@@ -138,7 +161,7 @@ export default function IntegrationsTab({
     }
   }
 
-  function handleVerifyCode() {
+  async function handleVerifyCode() {
     const stored = integrations.email_verification_code;
     if (!stored || emailCode.trim() !== stored) {
       toast.error('Incorrect code — please check and try again');
@@ -151,30 +174,59 @@ export default function IntegrationsTab({
       setEmailStep('input');
       return;
     }
-    // Verified!
-    setIntegrations({
+
+    // Verified — update integrations + practice email
+    const verifiedEmail = integrations.email_verification_email || emailAddress.trim();
+    const updatedIntegrations = {
       ...integrations,
       email_enabled: true,
       email_verified: true,
-      email_from: integrations.email_verification_email,
+      email_from: verifiedEmail,
       email_verification_code: null,
       email_verification_sent_at: null,
-    });
-    setEmailStep('verified');
-    toast.success('Email verified and enabled');
-    setExpanded(null);
+      email_verification_email: null,
+    };
+
+    try {
+      // Write directly to DB — update both integrations JSONB and the practice email column
+      const { error } = await supabase.from('practices').update({
+        integrations: updatedIntegrations,
+        email: verifiedEmail,
+      }).eq('id', practice?.id);
+
+      if (error) throw error;
+
+      setIntegrations(updatedIntegrations);
+      setEmailStep('verified');
+      toast.success('Email verified and enabled');
+      setExpanded(null);
+    } catch (err) {
+      console.error('Failed to save email verification:', err);
+      toast.error('Verification matched but failed to save — please try again');
+    }
   }
 
-  function handleEmailDisconnect() {
-    setIntegrations({
+  async function handleEmailDisconnect() {
+    const updatedIntegrations = {
       ...integrations,
       email_enabled: false,
       email_verified: false,
       email_from: null,
-    });
-    setEmailStep('input');
-    toast.success('Email disconnected');
-    setExpanded(null);
+    };
+
+    try {
+      await supabase.from('practices').update({
+        integrations: updatedIntegrations,
+      }).eq('id', practice?.id);
+
+      setIntegrations(updatedIntegrations);
+      setEmailStep('input');
+      toast.success('Email disconnected');
+      setExpanded(null);
+    } catch (err) {
+      console.error('Failed to disconnect email:', err);
+      toast.error('Failed to disconnect — please try again');
+    }
   }
 
   // ── All items in one flat list ──

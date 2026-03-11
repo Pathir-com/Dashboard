@@ -127,6 +127,26 @@ function newPatientWelcomeHtml(clinicName: string, patientName: string, tracking
 </table>${trackingPixel(trackingId)}</body></html>`;
 }
 
+function emailVerificationHtml(clinicName: string, code: string): string {
+  return `<!DOCTYPE html><html><head><meta charset="UTF-8"><meta name="viewport" content="width=device-width,initial-scale=1.0"></head>
+<body style="font-family:-apple-system,BlinkMacSystemFont,'Segoe UI',Roboto,sans-serif;margin:0;padding:0;background:#f5f5f5;">
+<table width="100%" cellpadding="0" cellspacing="0" style="max-width:600px;margin:0 auto;background:#fff;">
+<tr><td style="padding:40px 30px;text-align:center;background:linear-gradient(135deg,#667eea 0%,#764ba2 100%);">
+<h1 style="color:#fff;margin:0;font-size:24px;">Pathir</h1>
+<p style="color:rgba(255,255,255,0.9);margin:10px 0 0 0;">Email Verification</p></td></tr>
+<tr><td style="padding:40px 30px;text-align:center;">
+<p style="color:#333;font-size:16px;">Your verification code for <strong>${clinicName}</strong> is:</p>
+<div style="margin:30px auto;padding:20px 40px;background:#f0f0ff;border-radius:12px;display:inline-block;">
+<span style="font-size:36px;font-weight:700;letter-spacing:8px;color:#4f46e5;font-family:monospace;">${code}</span>
+</div>
+<p style="color:#666;font-size:14px;">Enter this code in your Pathir dashboard to verify your email address.</p>
+<p style="color:#999;font-size:12px;">This code expires in 10 minutes. If you didn't request this, you can safely ignore this email.</p>
+</td></tr>
+<tr><td style="padding:20px 30px;background:#f9f9f9;text-align:center;">
+<p style="color:#888;font-size:12px;">Pathir — Practice Management</p></td></tr>
+</table></body></html>`;
+}
+
 // ---------------------------------------------------------------------------
 // Main handler
 // ---------------------------------------------------------------------------
@@ -208,6 +228,10 @@ Deno.serve(async (req) => {
       case "new_patient_welcome":
         subject = `Welcome to ${clinicName}`;
         html = newPatientWelcomeHtml(clinicName, data.patient_name || "Patient", trackingId);
+        break;
+      case "email_verification":
+        subject = `${clinicName} — Verification Code: ${data.code || "000000"}`;
+        html = emailVerificationHtml(clinicName, data.code || "000000");
         break;
       default:
         return new Response(JSON.stringify({ error: `Unknown type: ${type}` }), {

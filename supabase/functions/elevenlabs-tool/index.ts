@@ -257,12 +257,19 @@ async function handleLookupCallerPhone(db: any, args: any) {
   if (!twilio_number) return { success: false, message: "No practice number detected." };
 
   const { data: practice } = await db
-    .from("practices").select("id, name, opening_hours, holiday_hours")
+    .from("practices").select("id, name, email, opening_hours, holiday_hours, integrations")
     .eq("twilio_phone_number", twilio_number).single();
   if (!practice) return { success: false, message: "Practice not found." };
 
   const practiceHours = getPracticeHoursStatus(practice.opening_hours, practice.holiday_hours);
-  const base = { success: true, practice_id: practice.id, practice_name: practice.name, practice_hours: practiceHours };
+  const integrations = practice.integrations || {};
+  const base = {
+    success: true, practice_id: practice.id, practice_name: practice.name,
+    practice_email: practice.email || integrations.email_from || null,
+    practice_hours: practiceHours,
+    email_enabled: !!integrations.email_enabled,
+    stripe_connected: !!integrations.stripe_connected,
+  };
 
   if (!caller_phone) return { ...base, found: false, message: "No caller phone number available." };
 
@@ -676,12 +683,19 @@ async function handleLookupWebVisitor(db: any, args: any) {
   if (!practice_id) return { success: false, message: "Missing practice ID." };
 
   const { data: practice } = await db
-    .from("practices").select("id, name, opening_hours, holiday_hours")
+    .from("practices").select("id, name, email, opening_hours, holiday_hours, integrations")
     .eq("id", practice_id).single();
   if (!practice) return { success: false, message: "Practice not found." };
 
   const practiceHours = getPracticeHoursStatus(practice.opening_hours, practice.holiday_hours);
-  const base = { success: true, practice_id: practice.id, practice_name: practice.name, practice_hours: practiceHours };
+  const pIntegrations = practice.integrations || {};
+  const base = {
+    success: true, practice_id: practice.id, practice_name: practice.name,
+    practice_email: practice.email || pIntegrations.email_from || null,
+    practice_hours: practiceHours,
+    email_enabled: !!pIntegrations.email_enabled,
+    stripe_connected: !!pIntegrations.stripe_connected,
+  };
 
   // Try to find the contact by phone or email
   let contact = null;
