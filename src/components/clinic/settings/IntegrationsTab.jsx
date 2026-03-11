@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Phone, MessageCircle, Mail, Globe, Facebook, Instagram,
-  CreditCard, Loader2, Check, AlertCircle, ChevronDown,
+  CreditCard, Loader2, Check, AlertCircle, ChevronDown, Copy, CheckCircle2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -32,10 +32,12 @@ export default function IntegrationsTab({
   const [igBusinessId, setIgBusinessId] = useState(integrations.instagram_business_id || '');
   const [igAccessToken, setIgAccessToken] = useState(integrations.instagram_access_token || '');
 
+  const [embedCopied, setEmbedCopied] = useState(false);
+
   const connected = {
     phone_enabled: hasNumber,
     sms_enabled: hasNumber,
-    web_chat_enabled: !!practice?.chatbase_agent_id,
+    web_chat_enabled: !!practice?.elevenlabs_agent_id,
     email_enabled: false,
     facebook_enabled: !!integrations.facebook_page_id,
     instagram_enabled: !!integrations.instagram_business_id,
@@ -115,8 +117,10 @@ export default function IntegrationsTab({
       key: 'web_chat_enabled',
       icon: <Globe className="w-4 h-4 text-blue-600" />,
       label: 'Web Chat',
-      desc: practice?.chatbase_agent_id ? 'Poppy — AI chat widget on your practice website' : 'AI chat widget on your practice website',
-      type: 'toggle',
+      desc: practice?.elevenlabs_agent_id ? 'Poppy — AI chat widget on your practice website' : 'AI chat widget — requires Voice AI to be enabled first',
+      type: practice?.elevenlabs_agent_id ? 'connect' : 'toggle',
+      isConnected: connected.web_chat_enabled,
+      disabled: !practice?.elevenlabs_agent_id,
     },
     {
       key: 'email_enabled',
@@ -230,6 +234,32 @@ export default function IntegrationsTab({
                     className="overflow-hidden"
                   >
                     <div className="px-6 pb-5 pt-1 ml-7 border-t border-slate-50">
+                      {/* ── Web Chat embed snippet ── */}
+                      {item.key === 'web_chat_enabled' && practice?.elevenlabs_agent_id && (() => {
+                        const snippet = `<script\n  src="https://amxcposgqlmgapzoopze.supabase.co/storage/v1/object/public/widget/pathir-chat.js"\n  data-agent-id="${practice.elevenlabs_agent_id}"\n  data-token-url="https://amxcposgqlmgapzoopze.supabase.co/functions/v1/chat-token"\n  data-title="${practice.name || 'Chat with us'}"\n  data-subtitle="Ask Poppy anything"\n  data-accent="#3072ff"\n></script>`;
+                        return (
+                          <div className="space-y-3 max-w-md">
+                            <p className="text-xs text-slate-500">Add this snippet to your website before the closing <code className="bg-slate-100 px-1 rounded">&lt;/body&gt;</code> tag:</p>
+                            <div className="relative">
+                              <pre className="bg-slate-900 text-slate-200 text-xs p-4 rounded-lg overflow-x-auto whitespace-pre-wrap font-mono leading-relaxed">{snippet}</pre>
+                              <button
+                                onClick={() => {
+                                  navigator.clipboard.writeText(snippet);
+                                  setEmbedCopied(true);
+                                  toast.success('Embed code copied');
+                                  setTimeout(() => setEmbedCopied(false), 2000);
+                                }}
+                                className="absolute top-2 right-2 p-1.5 rounded-md bg-slate-700 hover:bg-slate-600 text-slate-300 transition-colors"
+                                title="Copy to clipboard"
+                              >
+                                {embedCopied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-400" /> : <Copy className="w-3.5 h-3.5" />}
+                              </button>
+                            </div>
+                            <p className="text-xs text-slate-400">Works on Framer, WordPress, Squarespace, Wix, or any HTML page.</p>
+                          </div>
+                        );
+                      })()}
+
                       {/* ── Stripe ── */}
                       {item.key === 'stripe' && (
                         <div className="space-y-3 max-w-sm">

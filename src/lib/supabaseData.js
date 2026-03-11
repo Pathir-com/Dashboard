@@ -302,6 +302,12 @@ export async function confirmAppointmentRequest(
 
   if (reqErr) throw reqErr;
 
+  // 3. Update the linked enquiry so the inbox shows green "Confirmed"
+  await supabase
+    .from('enquiries')
+    .update({ appointment_status: 'confirmed', is_completed: true })
+    .eq('appointment_request_id', requestId);
+
   return appointment;
 }
 

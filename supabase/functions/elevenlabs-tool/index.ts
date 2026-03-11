@@ -187,12 +187,73 @@ async function findContactByPhone(db: any, practiceId: string, phone: string) {
 }
 
 // ---------------------------------------------------------------------------
+// RAG — fetch recent conversation history for a contact or phone number
+// ---------------------------------------------------------------------------
+
+/**
+ * Build a human-readable summary of past conversations for the agent.
+ * Searches by contact_id (known patient) first, then by caller_phone
+ * (unknown but recurring). Returns the 5 most recent interactions.
+ */
+// deno-lint-ignore no-explicit-any
+async function getConversationHistory(db: any, opts: { contactId?: string; phone?: string; practiceId: string }) {
+  const { contactId, phone, practiceId } = opts;
+
+  let conversations = null;
+
+  // Path 1: known patient — search by contact_id (fast, indexed)
+  if (contactId) {
+    const { data } = await db
+      .from("conversations")
+      .select("channel, status, outcome, summary, caller_name, started_at, duration_seconds")
+      .eq("contact_id", contactId)
+      .eq("practice_id", practiceId)
+      .order("started_at", { ascending: false })
+      .limit(5);
+    conversations = data;
+  }
+
+  // Path 2: unknown caller — search by phone number (still indexed)
+  if ((!conversations || conversations.length === 0) && phone) {
+    const normalised = normalizePhone(phone);
+    const { data } = await db
+      .from("conversations")
+      .select("channel, status, outcome, summary, caller_name, started_at, duration_seconds")
+      .eq("caller_phone", normalised)
+      .eq("practice_id", practiceId)
+      .order("started_at", { ascending: false })
+      .limit(5);
+    conversations = data;
+  }
+
+  if (!conversations || conversations.length === 0) return null;
+
+  // Format into a concise context string the agent can use naturally
+  const channelLabel: Record<string, string> = {
+    phone: "Phone call", web_chat: "Web chat", sms: "Text message",
+  };
+  const lines = conversations.map((c: {
+    channel: string; outcome: string; summary: string;
+    started_at: string; duration_seconds: number; caller_name: string;
+  }) => {
+    const date = new Date(c.started_at).toLocaleDateString("en-GB", {
+      weekday: "short", day: "numeric", month: "short",
+    });
+    const via = channelLabel[c.channel] || c.channel;
+    const outcomeStr = c.outcome ? ` → ${c.outcome.replace(/_/g, " ")}` : "";
+    return `- ${date} (${via}): ${c.summary || "No summary"}${outcomeStr}`;
+  });
+
+  return "Previous interactions:\n" + lines.join("\n");
+}
+
+// ---------------------------------------------------------------------------
 // Tool handlers
 // ---------------------------------------------------------------------------
 
 // deno-lint-ignore no-explicit-any
 async function handleLookupCallerPhone(db: any, args: any) {
-  const { caller_phone, twilio_number } = args;
+  const { caller_phone, twilio_number, conversation_id } = args;
   if (!twilio_number) return { success: false, message: "No practice number detected." };
 
   const { data: practice } = await db
@@ -223,16 +284,44 @@ async function handleLookupCallerPhone(db: any, args: any) {
     .from("enquiries").insert(enquiryRow).select("id").single();
   const enquiryId = enquiry?.id || null;
 
+  // Create a conversation record for this session
+  const convRow = {
+    practice_id: practice.id,
+    contact_id: contact?.id || null,
+    elevenlabs_conversation_id: conversation_id || null,
+    channel: "phone",
+    status: "active",
+    caller_name: contact?.name || null,
+    caller_phone: normalised,
+    enquiry_id: enquiryId,
+  };
+  const { data: conv } = await db
+    .from("conversations").insert(convRow).select("id").single();
+
+  // Fetch RAG context — past conversations for this patient/number
+  const history = await getConversationHistory(db, {
+    contactId: contact?.id, phone: normalised, practiceId: practice.id,
+  });
+
   if (contact) {
     return {
       ...base, found: true, contact_id: contact.id, contact_name: contact.name,
       contact_phone: contact.phone, contact_email: contact.email,
       contact_dob: contact.date_of_birth, contact_address: contact.address,
       contact_postcode: contact.postcode, enquiry_id: enquiryId,
-      message: `Account found for this phone number. Patient name on file: ${contact.name}.`,
+      conversation_db_id: conv?.id || null,
+      conversation_history: history,
+      message: `Account found for this phone number. Patient name on file: ${contact.name}.`
+        + (history ? `\n\n${history}` : ""),
     };
   }
-  return { ...base, found: false, enquiry_id: enquiryId, message: "No account linked to this phone number." };
+  return {
+    ...base, found: false, enquiry_id: enquiryId,
+    conversation_db_id: conv?.id || null,
+    conversation_history: history,
+    message: "No account linked to this phone number."
+      + (history ? ` However, this number has called before:\n\n${history}` : ""),
+  };
 }
 
 // deno-lint-ignore no-explicit-any
@@ -241,16 +330,31 @@ async function handleLookupAccountPhone(db: any, args: any) {
   if (!practice_id || !account_phone) return { success: false, message: "Missing practice ID or phone number." };
 
   const contact = await findContactByPhone(db, practice_id, account_phone);
+
+  // Fetch RAG context for the looked-up number
+  const history = await getConversationHistory(db, {
+    contactId: contact?.id,
+    phone: normalizePhone(account_phone),
+    practiceId: practice_id,
+  });
+
   if (contact) {
     return {
       success: true, found: true, contact_id: contact.id, contact_name: contact.name,
       contact_phone: contact.phone, contact_email: contact.email,
       contact_dob: contact.date_of_birth, contact_address: contact.address,
       contact_postcode: contact.postcode,
-      message: `Account found. Patient name on file: ${contact.name}.`,
+      conversation_history: history,
+      message: `Account found. Patient name on file: ${contact.name}.`
+        + (history ? `\n\n${history}` : ""),
     };
   }
-  return { success: true, found: false, message: "No account found with that phone number either." };
+  return {
+    success: true, found: false,
+    conversation_history: history,
+    message: "No account found with that phone number."
+      + (history ? ` But this number has interacted before:\n\n${history}` : ""),
+  };
 }
 
 // deno-lint-ignore no-explicit-any
@@ -460,7 +564,7 @@ function ordinal(n: number): string {
 
 // deno-lint-ignore no-explicit-any
 async function handleRequestAppointment(db: any, args: any) {
-  const { practice_id, contact_id, service_id, chosen_slot, is_urgent = false, notes } = args;
+  const { practice_id, contact_id, service_id, chosen_slot, is_urgent = false, notes, enquiry_id } = args;
   if (!practice_id) return { success: false, message: "Missing practice ID." };
 
   const { data: practice } = await db.from("practices").select("opening_hours, holiday_hours").eq("id", practice_id).single();
@@ -492,6 +596,37 @@ async function handleRequestAppointment(db: any, args: any) {
 
   if (error) { console.error("[REQUEST APPOINTMENT]", error); return { success: false, message: "Failed to create appointment request." }; }
 
+  /* Link the booking back to the enquiry so the dashboard shows it.
+     The dashboard reads selected_service, appointment_datetime, and
+     appointment_status to render the appointment card. Status starts
+     as 'pending' (yellow) — turns 'confirmed' (green) when the practice
+     confirms it in the diary. Do NOT set is_completed here. */
+  if (enquiry_id) {
+    let serviceName = "Appointment";
+    if (service_id) {
+      const { data: svc } = await db.from("services").select("name").eq("id", service_id).single();
+      if (svc) serviceName = svc.name;
+    }
+
+    const enquiryUpdate: Record<string, unknown> = {
+      selected_service: serviceName,
+      appointment_status: "pending",
+      appointment_request_id: request.id,
+      message: `Appointment request: ${serviceName} — ${slot ? `${slot.date} at ${slot.start_time}` : "ASAP"}`,
+    };
+    if (slot?.date && slot?.start_time) {
+      enquiryUpdate.appointment_datetime = `${slot.date}T${slot.start_time}:00`;
+    }
+    await db.from("enquiries").update(enquiryUpdate).eq("id", enquiry_id);
+  }
+
+  /* Mark the conversation as having resulted in a booking */
+  if (enquiry_id) {
+    await db.from("conversations").update({
+      outcome: "booking_made",
+    }).eq("enquiry_id", enquiry_id);
+  }
+
   let message;
   if (status === "asap") {
     message = outsideHours
@@ -501,7 +636,93 @@ async function handleRequestAppointment(db: any, args: any) {
     message = "I've pencilled that in. The team will confirm and send you a text shortly.";
   }
 
-  return { success: true, request_id: request.id, status, submitted_outside_hours: outsideHours, message };
+  return { success: true, request_id: request.id, status, submitted_outside_hours: outsideHours, enquiry_id, message };
+}
+
+// deno-lint-ignore no-explicit-any
+async function handleLookupWebVisitor(db: any, args: any) {
+  const { practice_id, visitor_phone, visitor_email, visitor_name, conversation_id } = args;
+  if (!practice_id) return { success: false, message: "Missing practice ID." };
+
+  const { data: practice } = await db
+    .from("practices").select("id, name, opening_hours, holiday_hours")
+    .eq("id", practice_id).single();
+  if (!practice) return { success: false, message: "Practice not found." };
+
+  const practiceHours = getPracticeHoursStatus(practice.opening_hours, practice.holiday_hours);
+  const base = { success: true, practice_id: practice.id, practice_name: practice.name, practice_hours: practiceHours };
+
+  // Try to find the contact by phone or email
+  let contact = null;
+  const normalised = visitor_phone ? normalizePhone(visitor_phone) : null;
+  if (visitor_phone) {
+    contact = await findContactByPhone(db, practice.id, visitor_phone);
+  }
+  if (!contact && visitor_email) {
+    const { data } = await db
+      .from("contacts").select("id, name, phone, email, date_of_birth, address, postcode")
+      .eq("practice_id", practice.id).eq("email", visitor_email)
+      .limit(1).single();
+    contact = data;
+  }
+
+  // Create an enquiry for this web chat session
+  const enquiryRow = {
+    practice_id: practice.id,
+    patient_name: contact?.name || visitor_name || "Web Chat Visitor",
+    phone_number: normalised || null,
+    message: "Web chat session",
+    source: "chat",
+    is_urgent: false,
+    is_completed: false,
+    contact_id: contact?.id || null,
+  };
+  const { data: enquiry } = await db
+    .from("enquiries").insert(enquiryRow).select("id").single();
+
+  // Create a conversation record for this session
+  const convRow = {
+    practice_id: practice.id,
+    contact_id: contact?.id || null,
+    elevenlabs_conversation_id: conversation_id || null,
+    channel: "web_chat",
+    status: "active",
+    caller_name: contact?.name || visitor_name || null,
+    caller_phone: normalised || null,
+    enquiry_id: enquiry?.id || null,
+  };
+  const { data: conv } = await db
+    .from("conversations").insert(convRow).select("id").single();
+
+  // Fetch RAG context
+  const history = await getConversationHistory(db, {
+    contactId: contact?.id,
+    phone: normalised || undefined,
+    practiceId: practice.id,
+  });
+
+  if (contact) {
+    return {
+      ...base, found: true, contact_id: contact.id, contact_name: contact.name,
+      contact_phone: contact.phone, contact_email: contact.email,
+      contact_dob: contact.date_of_birth, contact_address: contact.address,
+      contact_postcode: contact.postcode,
+      enquiry_id: enquiry?.id || null,
+      conversation_db_id: conv?.id || null,
+      conversation_history: history,
+      message: `Account found. Patient name on file: ${contact.name}.`
+        + (history ? `\n\n${history}` : ""),
+    };
+  }
+
+  return {
+    ...base, found: false,
+    enquiry_id: enquiry?.id || null,
+    conversation_db_id: conv?.id || null,
+    conversation_history: history,
+    message: "No account found with those details."
+      + (history ? ` But this person has interacted before:\n\n${history}` : ""),
+  };
 }
 
 // ---------------------------------------------------------------------------
@@ -531,6 +752,7 @@ Deno.serve(async (req) => {
       switch (toolName) {
         case "lookup_caller_phone": result = await handleLookupCallerPhone(db, args); break;
         case "lookup_account_phone": result = await handleLookupAccountPhone(db, args); break;
+        case "lookup_web_visitor": result = await handleLookupWebVisitor(db, args); break;
         case "verify_identity": result = await handleVerifyIdentity(db, args); break;
         case "update_address": result = await handleUpdateAddress(db, args); break;
         case "search_availability": result = await handleSearchAvailability(db, args); break;
