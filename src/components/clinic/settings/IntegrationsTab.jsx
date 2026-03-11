@@ -39,7 +39,7 @@ export default function IntegrationsTab({
     email_enabled: false,
     facebook_enabled: !!integrations.facebook_page_id,
     instagram_enabled: !!integrations.instagram_business_id,
-    stripe: !!integrations.stripe_publishable_key,
+    stripe: !!integrations.stripe_connected,
   };
 
   function toggle(key) {
@@ -62,7 +62,8 @@ export default function IntegrationsTab({
   }
 
   function handleStripeDisconnect() {
-    setIntegrations({ ...integrations, stripe_publishable_key: '', stripe_secret_key: '', stripe_connected: false });
+    const { stripe_publishable_key, stripe_secret_key, stripe_connected, stripe_mode, ...rest } = integrations;
+    setIntegrations(rest);
     setStripeKey(''); setStripeSecret('');
     toast.success('Stripe disconnected'); setExpanded(null);
   }
@@ -129,7 +130,11 @@ export default function IntegrationsTab({
       key: 'stripe',
       icon: <CreditCard className="w-4 h-4 text-[#635BFF]" />,
       label: 'Stripe',
-      desc: connected.stripe ? `Connected (${integrations.stripe_mode || 'test'}) — payments and deposits active` : 'Accept payments, deposits, and payment links',
+      desc: connected.stripe
+        ? (!integrations.stripe_publishable_key || !integrations.stripe_secret_key
+          ? `Connected (${integrations.stripe_mode || 'test'}) — missing keys, click Settings to fix`
+          : `Connected (${integrations.stripe_mode || 'test'}) — payments and deposits active`)
+        : 'Accept payments, deposits, and payment links',
       type: 'connect',
       isConnected: connected.stripe,
     },
