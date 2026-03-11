@@ -1,6 +1,22 @@
 /**
- * Supabase data layer — replaces localStorage for logged-in users.
- * Provides the same API surface as base44Client.js but reads/writes Supabase.
+ * Purpose:
+ *   Supabase data layer — replaces localStorage for logged-in users.
+ *   Provides CRUD for practices, enquiries, practitioners, appointments,
+ *   and appointment requests.
+ *
+ * Dependencies:
+ *   - @/lib/supabase (Supabase client singleton)
+ *
+ * Used by:
+ *   - src/pages/Clinic.jsx (practice + enquiry fetching)
+ *   - src/components/clinic/ClinicSettings.jsx (practice updates)
+ *   - src/components/clinic/DiaryView.jsx (appointments + practitioners)
+ *   - src/pages/Internal.jsx (practice management)
+ *
+ * Changes:
+ *   2026-03-11: Added practitioners, appointments, and appointment request queries
+ *               for the diary/booking system.
+ *   2026-03-09: Initial creation with profile, practice, and enquiry CRUD.
  */
 import { supabase } from '@/lib/supabase';
 
@@ -182,4 +198,124 @@ export async function deleteEnquiry(id) {
     .eq('id', id);
 
   if (error) throw error;
+}
+
+// --------------- Practitioners ---------------
+
+/** Fetch all active practitioners for a practice, with their working hours. */
+export async function listPractitioners(practiceId) {
+  const { data, error } = await supabase
+    .from('practitioners')
+    .select('id, name, title, credentials, working_hours')
+    .eq('practice_id', practiceId)
+    .order('name');
+
+  if (error) throw error;
+  return data || [];
+}
+
+// --------------- Appointments (diary) ---------------
+
+/**
+ * Fetch confirmed/pending appointments for a single day, joined with
+ * practitioner name, service name + duration, and contact name + phone.
+ * Returns everything the diary grid needs to render blocks.
+ */
+export async function listAppointmentsForDay(practiceId, dateStr) {
+  // dateStr is "YYYY-MM-DD" — query the full day window in UTC
+  const dayStart = `${dateStr}T00:00:00Z`;
+  const dayEnd = `${dateStr}T23:59:59Z`;
+
+  const { data, error } = await supabase
+    .from('appointments')
+    .select(`
+      id, starts_at, ends_at, status, notes, source,
+      practitioner:practitioners ( id, name, title ),
+      service:services ( id, name, duration_minutes ),
+      contact:contacts ( id, name, phone )
+    `)
+    .eq('practice_id', practiceId)
+    .in('status', ['confirmed', 'pending'])
+    .gte('starts_at', dayStart)
+    .lte('starts_at', dayEnd)
+    .order('starts_at');
+
+  if (error) throw error;
+  return data || [];
+}
+
+// --------------- Appointment Requests ---------------
+
+/**
+ * Fetch pending/asap appointment requests awaiting team confirmation.
+ * Joined with contact, service, and preferred practitioner for display.
+ */
+export async function listPendingRequests(practiceId) {
+  const { data, error } = await supabase
+    .from('appointment_requests')
+    .select(`
+      id, status, is_urgent, preferred_date, preferred_time,
+      chosen_slot, notes, source, created_at,
+      contact:contacts ( id, name, phone ),
+      service:services ( id, name, duration_minutes ),
+      preferred_practitioner:practitioners ( id, name )
+    `)
+    .eq('practice_id', practiceId)
+    .in('status', ['pending', 'asap'])
+    .order('created_at', { ascending: true });
+
+  if (error) throw error;
+  return data || [];
+}
+
+/**
+ * Confirm a pending request — creates an appointment row and updates
+ * the request status to 'confirmed'. Returns the new appointment.
+ */
+export async function confirmAppointmentRequest(
+  requestId,
+  { practiceId, practitionerId, serviceId, contactId, startsAt, endsAt, source }
+) {
+  // 1. Create the confirmed appointment
+  const { data: appointment, error: aptErr } = await supabase
+    .from('appointments')
+    .insert({
+      practice_id: practiceId,
+      practitioner_id: practitionerId,
+      service_id: serviceId,
+      contact_id: contactId || null,
+      starts_at: startsAt,
+      ends_at: endsAt,
+      status: 'confirmed',
+      source: source || 'phone',
+    })
+    .select()
+    .single();
+
+  if (aptErr) throw aptErr;
+
+  // 2. Mark the request as confirmed
+  const { error: reqErr } = await supabase
+    .from('appointment_requests')
+    .update({ status: 'confirmed', confirmed_at: new Date().toISOString() })
+    .eq('id', requestId);
+
+  if (reqErr) throw reqErr;
+
+  return appointment;
+}
+
+/**
+ * Update an appointment's status (e.g. cancel, complete, no-show).
+ */
+export async function updateAppointmentStatus(appointmentId, status) {
+  const { data, error } = await supabase
+    .from('appointments')
+    .update({ status })
+    .eq('id', appointmentId)
+    .select()
+    .single();
+
+  if (error) throw error;
+  return data;
 }

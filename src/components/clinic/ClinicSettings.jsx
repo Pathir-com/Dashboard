@@ -143,6 +143,7 @@ export default function ClinicSettings({ practice, onUpdate }) {
             details={details} setDetails={setDetails}
             hours={hours} setHours={setHours}
             holidayHours={holidayHours} setHolidayHours={setHolidayHours}
+            integrations={integrations}
             pearDental={pearDental} setPearDental={setPearDental}
             practiceType={practiceType} setPracticeType={setPracticeType}
           />
