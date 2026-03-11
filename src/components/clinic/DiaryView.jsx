@@ -208,13 +208,24 @@ export default function DiaryView({ enquiries, practice }) {
     pendingRequests.forEach(req => {
       const slot = req.chosen_slot;
       if (!slot?.date || slot.date !== dateStr) return;
+
+      // Resolve practitioner — if slot's practitioner_id doesn't match any known
+      // practitioner (e.g. it was deleted/re-synced), fall back to the first one
+      let resolvedPracId = slot.practitioner_id || req.preferred_practitioner?.id;
+      let resolvedPracName = slot.practitioner_name || req.preferred_practitioner?.name || '';
+      const pracExists = practitioners.some(p => p.id === resolvedPracId);
+      if (!pracExists && practitioners.length > 0) {
+        resolvedPracId = practitioners[0].id;
+        resolvedPracName = resolvedPracName || practitioners[0].displayName;
+      }
+
       blocks.push({
         key: `req-${req.id}`,
         id: req.id,
         type: 'pending',
         requestData: req, // keep original for the confirm flow
-        practitionerId: slot.practitioner_id || req.preferred_practitioner?.id,
-        practitionerName: slot.practitioner_name || req.preferred_practitioner?.name || '',
+        practitionerId: resolvedPracId,
+        practitionerName: resolvedPracName,
         patientName: req.contact?.name || 'Unknown Patient',
         patientPhone: req.contact?.phone || '',
         contactId: req.contact?.id || null,
@@ -300,10 +311,15 @@ export default function DiaryView({ enquiries, practice }) {
     const req = block.requestData;
     const slot = req.chosen_slot;
 
+    // Use the resolved practitioner ID from the block (already validated against
+    // the practitioners list) rather than the raw slot practitioner_id which
+    // may reference a deleted/orphaned practitioner
+    const practitionerId = block.practitionerId || slot.practitioner_id || req.preferred_practitioner?.id;
+
     try {
       const appointment = await confirmAppointmentRequest(req.id, {
         practiceId,
-        practitionerId: slot.practitioner_id || req.preferred_practitioner?.id,
+        practitionerId,
         serviceId: req.service?.id,
         contactId: req.contact?.id,
         startsAt: `${slot.date}T${slot.start_time}:00Z`,
