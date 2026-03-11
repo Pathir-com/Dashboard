@@ -369,7 +369,20 @@ async function handleVerifyIdentity(db: any, args: any) {
 
   const nameOnFile = (contact.name || "").toLowerCase().trim();
   const nameStated = (stated_name || "").toLowerCase().trim();
-  const nameMatch = nameOnFile === nameStated || nameOnFile.includes(nameStated) || nameStated.includes(nameOnFile);
+
+  // Fuzzy name matching: exact, substring, or compare individual parts
+  let nameMatch = nameOnFile === nameStated || nameOnFile.includes(nameStated) || nameStated.includes(nameOnFile);
+  if (!nameMatch) {
+    // Split into parts and check if surname matches + first name is close
+    const fileParts = nameOnFile.split(/[\s\-]+/).filter(Boolean);
+    const statedParts = nameStated.split(/[\s\-]+/).filter(Boolean);
+    // Count how many parts match (handles "johannes" vs "johannis")
+    const matchingParts = fileParts.filter((fp) =>
+      statedParts.some((sp) => sp === fp || (fp.length > 3 && sp.length > 3 && levenshtein(fp, sp) <= 2))
+    );
+    // If at least half the name parts match (and at least 1), accept it
+    nameMatch = matchingParts.length >= Math.ceil(Math.max(fileParts.length, statedParts.length) / 2) && matchingParts.length >= 1;
+  }
 
   if (!nameMatch) return { success: true, verified: false, reason: "name_mismatch", message: "The name doesn't match what we have on file." };
 
@@ -508,11 +521,15 @@ async function findSlots(db: any, opts: any) {
       .in("status", ["confirmed", "pending"]);
 
     for (const prac of practitioners) {
-      const wh = (prac.working_hours || []).find((w: { day: string }) => w.day === dayName);
-      if (!wh || !wh.is_working) continue;
+      // working_hours can be an array [{day, is_working, start_time, end_time}] or {} (empty/unset)
+      const whArr = Array.isArray(prac.working_hours) ? prac.working_hours : [];
+      const wh = whArr.find((w: { day: string }) => w.day === dayName);
 
-      const startMin = timeToMinutes(wh.start_time || dayHours.open_time);
-      const endMin = timeToMinutes(wh.end_time || dayHours.close_time);
+      // If practitioner has no working_hours set, assume they follow practice hours
+      if (whArr.length > 0 && (!wh || !wh.is_working)) continue;
+
+      const startMin = timeToMinutes(wh?.start_time || dayHours.open_time);
+      const endMin = timeToMinutes(wh?.end_time || dayHours.close_time);
 
       // Build blocked windows for this practitioner
       const blocked = (existing || [])
@@ -554,6 +571,20 @@ async function findSlots(db: any, opts: any) {
     }
   }
   return slots;
+}
+
+/** Simple Levenshtein distance for fuzzy name matching */
+function levenshtein(a: string, b: string): number {
+  const m = a.length, n = b.length;
+  const dp: number[][] = Array.from({ length: m + 1 }, (_, i) =>
+    Array.from({ length: n + 1 }, (_, j) => (i === 0 ? j : j === 0 ? i : 0))
+  );
+  for (let i = 1; i <= m; i++)
+    for (let j = 1; j <= n; j++)
+      dp[i][j] = a[i - 1] === b[j - 1]
+        ? dp[i - 1][j - 1]
+        : 1 + Math.min(dp[i - 1][j], dp[i][j - 1], dp[i - 1][j - 1]);
+  return dp[m][n];
 }
 
 function ordinal(n: number): string {
@@ -761,6 +792,7 @@ Deno.serve(async (req) => {
       }
     } catch (err) {
       console.error(`[ELEVENLABS TOOL] Error in ${toolName}:`, err);
+      console.error(`[ELEVENLABS TOOL] ${toolName} detail:`, err instanceof Error ? err.message : String(err));
       result = { success: false, message: "Something went wrong. Please transfer to reception." };
     }
 

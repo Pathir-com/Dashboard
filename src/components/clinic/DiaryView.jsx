@@ -31,6 +31,7 @@ import {
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
 import {
   listPractitioners,
   listAppointmentsForDay,
@@ -116,6 +117,42 @@ export default function DiaryView({ enquiries, practice }) {
     staleTime: 15_000,
   });
 
+  // Email events for contacts with appointments on the selected day
+  // Keyed by contact_id → latest email status
+  const contactIds = useMemo(() => {
+    const ids = new Set();
+    dbAppointments.forEach(a => { if (a.contact?.id) ids.add(a.contact.id); });
+    pendingRequests.forEach(r => { if (r.contact?.id) ids.add(r.contact.id); });
+    return [...ids];
+  }, [dbAppointments, pendingRequests]);
+
+  const { data: emailEvents = [] } = useQuery({
+    queryKey: ['email-events-diary', practiceId, contactIds.join(',')],
+    queryFn: async () => {
+      if (contactIds.length === 0) return [];
+      const { data } = await supabase
+        .from('email_events')
+        .select('id, contact_id, email_type, status, sent_at, delivered_at, opened_at')
+        .eq('practice_id', practiceId)
+        .eq('email_type', 'appointment_confirmation')
+        .in('contact_id', contactIds)
+        .order('sent_at', { ascending: false });
+      return data || [];
+    },
+    enabled: !!practiceId && contactIds.length > 0,
+    staleTime: 10_000,
+  });
+
+  // Map contact_id → latest confirmation email status
+  const emailStatusByContact = useMemo(() => {
+    const map = {};
+    emailEvents.forEach(ev => {
+      // Keep only the most recent per contact
+      if (!map[ev.contact_id]) map[ev.contact_id] = ev;
+    });
+    return map;
+  }, [emailEvents]);
+
   // ---- Practitioner list (DB table → JSONB fallback) ----
 
   const practitioners = useMemo(() => {
@@ -156,12 +193,14 @@ export default function DiaryView({ enquiries, practice }) {
           : 'Unknown',
         patientName: apt.contact?.name || 'Unknown Patient',
         patientPhone: apt.contact?.phone || '',
+        contactId: apt.contact?.id || null,
         serviceName: apt.service?.name || '',
         startMin: toMinutes(apt.starts_at),
         endMin: toMinutes(apt.ends_at),
         source: apt.source,
         notes: apt.notes,
         status: apt.status,
+        emailStatus: apt.contact?.id ? emailStatusByContact[apt.contact.id] : null,
       });
     });
 
@@ -178,6 +217,7 @@ export default function DiaryView({ enquiries, practice }) {
         practitionerName: slot.practitioner_name || req.preferred_practitioner?.name || '',
         patientName: req.contact?.name || 'Unknown Patient',
         patientPhone: req.contact?.phone || '',
+        contactId: req.contact?.id || null,
         serviceName: req.service?.name || '',
         startMin: toMinutes(slot.start_time),
         endMin: toMinutes(slot.end_time),
@@ -224,7 +264,7 @@ export default function DiaryView({ enquiries, practice }) {
     });
 
     return blocks.sort((a, b) => a.startMin - b.startMin);
-  }, [dbAppointments, pendingRequests, enquiries, dateStr, selectedDay, practitioners]);
+  }, [dbAppointments, pendingRequests, enquiries, dateStr, selectedDay, practitioners, emailStatusByContact]);
 
   // ---- Pending requests without a specific time (sidebar list only) ----
   const untimedRequests = pendingRequests.filter(req => {
@@ -261,7 +301,7 @@ export default function DiaryView({ enquiries, practice }) {
     const slot = req.chosen_slot;
 
     try {
-      await confirmAppointmentRequest(req.id, {
+      const appointment = await confirmAppointmentRequest(req.id, {
         practiceId,
         practitionerId: slot.practitioner_id || req.preferred_practitioner?.id,
         serviceId: req.service?.id,
@@ -272,14 +312,64 @@ export default function DiaryView({ enquiries, practice }) {
       });
 
       toast.success(`Confirmed: ${block.patientName} at ${minutesToDisplay(block.startMin)}`);
-      // Refresh both queries so the diary updates
-      queryClient.invalidateQueries({ queryKey: ['appointments', practiceId] });
-      queryClient.invalidateQueries({ queryKey: ['pending-requests', practiceId] });
+
+      // Send confirmation email to the patient if they have an email
+      if (req.contact?.id) {
+        sendConfirmationEmail(req.contact.id, {
+          patientName: block.patientName,
+          serviceName: block.serviceName,
+          date: slot.date,
+          startTime: slot.start_time,
+          practitionerName: block.practitionerName,
+          enquiryId: req.enquiry_id,
+        });
+      }
+
+      // Close popover first, then refetch so the confirmed block appears
       setSelectedBlock(null);
+      await queryClient.refetchQueries({ queryKey: ['appointments', practiceId, dateStr] });
+      await queryClient.refetchQueries({ queryKey: ['pending-requests', practiceId] });
+      queryClient.invalidateQueries({ queryKey: ['enquiries'] });
     } catch (err) {
       toast.error(`Failed to confirm: ${err.message}`);
     } finally {
       setIsConfirming(false);
+    }
+  };
+
+  // ---- Send confirmation email (fire-and-forget) ----
+  const sendConfirmationEmail = async (contactId, details) => {
+    try {
+      // Get the patient's email from the contact record
+      const { data: contact } = await supabase
+        .from('contacts')
+        .select('email')
+        .eq('id', contactId)
+        .single();
+
+      if (!contact?.email) return; // no email on file, skip silently
+
+      const dateObj = new Date(`${details.date}T${details.startTime}:00`);
+      const dateTimeStr = format(dateObj, "EEEE d MMMM 'at' h:mm a");
+
+      await supabase.functions.invoke('send-email', {
+        body: {
+          to: contact.email,
+          type: 'appointment_confirmation',
+          practice_id: practiceId,
+          enquiry_id: details.enquiryId || null,
+          contact_id: contactId,
+          data: {
+            patient_name: details.patientName,
+            service: details.serviceName,
+            date_time: dateTimeStr,
+            practitioner: details.practitionerName,
+          },
+        },
+      });
+      toast.success('Confirmation email sent');
+    } catch (err) {
+      console.error('Failed to send confirmation email', err);
     }
   };
 
@@ -535,6 +625,26 @@ export default function DiaryView({ enquiries, practice }) {
                             {isPending && height >= 48 && (
                               <p className="text-[10px] opacity-60 mt-0.5">Pending confirmation</p>
                             )}
+                            {/* Email status indicator */}
+                            {b.emailStatus && height >= 36 && (
+                              <span className={`inline-flex items-center gap-0.5 text-[9px] mt-0.5 ${
+                                b.emailStatus.status === 'opened' || b.emailStatus.status === 'clicked'
+                                  ? 'text-green-700'
+                                  : b.emailStatus.status === 'delivered'
+                                    ? 'text-blue-700'
+                                    : b.emailStatus.status === 'sent'
+                                      ? 'text-amber-600'
+                                      : 'text-slate-400'
+                              }`}>
+                                {b.emailStatus.status === 'opened' || b.emailStatus.status === 'clicked'
+                                  ? '✓✓ Email opened'
+                                  : b.emailStatus.status === 'delivered'
+                                    ? '✓ Email delivered'
+                                    : b.emailStatus.status === 'sent'
+                                      ? '⚠ Sent — not delivered'
+                                      : ''}
+                              </span>
+                            )}
                           </button>
                         );
                       })}
@@ -601,6 +711,34 @@ export default function DiaryView({ enquiries, practice }) {
                 <div className="flex items-start gap-2">
                   <span className="text-slate-400 w-16">Notes</span>
                   <span>{selectedBlock.notes}</span>
+                </div>
+              )}
+              {selectedBlock.emailStatus && (
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 w-16">Email</span>
+                  <span className={`font-medium ${
+                    selectedBlock.emailStatus.status === 'opened' || selectedBlock.emailStatus.status === 'clicked'
+                      ? 'text-green-600'
+                      : selectedBlock.emailStatus.status === 'delivered'
+                        ? 'text-blue-600'
+                        : selectedBlock.emailStatus.status === 'sent'
+                          ? 'text-amber-600'
+                          : 'text-slate-400'
+                  }`}>
+                    {selectedBlock.emailStatus.status === 'opened' || selectedBlock.emailStatus.status === 'clicked'
+                      ? `Opened${selectedBlock.emailStatus.opened_at ? ` ${format(new Date(selectedBlock.emailStatus.opened_at), 'h:mm a')}` : ''}`
+                      : selectedBlock.emailStatus.status === 'delivered'
+                        ? `Delivered${selectedBlock.emailStatus.delivered_at ? ` ${format(new Date(selectedBlock.emailStatus.delivered_at), 'h:mm a')}` : ''}`
+                        : selectedBlock.emailStatus.status === 'sent'
+                          ? 'Sent — not yet delivered'
+                          : selectedBlock.emailStatus.status}
+                  </span>
+                </div>
+              )}
+              {selectedBlock.type === 'confirmed' && !selectedBlock.emailStatus && (
+                <div className="flex items-center gap-2">
+                  <span className="text-slate-400 w-16">Email</span>
+                  <span className="text-slate-400">No email sent</span>
                 </div>
               )}
             </div>

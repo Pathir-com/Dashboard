@@ -10,6 +10,7 @@ import {
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
+import { supabase } from '@/lib/supabase';
 
 export default function IntegrationsTab({
   practice,
@@ -34,11 +35,19 @@ export default function IntegrationsTab({
 
   const [embedCopied, setEmbedCopied] = useState(false);
 
+  // Email verification state
+  const [emailAddress, setEmailAddress] = useState(practice?.email || '');
+  const [emailCode, setEmailCode] = useState('');
+  const [emailStep, setEmailStep] = useState(
+    integrations.email_verified ? 'verified' : 'input' // 'input' | 'code' | 'verified'
+  );
+  const [isSendingCode, setIsSendingCode] = useState(false);
+
   const connected = {
     phone_enabled: hasNumber,
     sms_enabled: hasNumber,
     web_chat_enabled: !!practice?.elevenlabs_agent_id,
-    email_enabled: false,
+    email_enabled: !!integrations.email_enabled,
     facebook_enabled: !!integrations.facebook_page_id,
     instagram_enabled: !!integrations.instagram_business_id,
     stripe: !!integrations.stripe_connected,
@@ -94,6 +103,80 @@ export default function IntegrationsTab({
     } catch (err) { toast.error(err.message); } finally { setIsVerifying(false); }
   }
 
+  // ── Email verification ──
+  async function handleSendVerification() {
+    const email = emailAddress.trim();
+    if (!email || !email.includes('@')) { toast.error('Please enter a valid email address'); return; }
+    setIsSendingCode(true);
+    try {
+      // Generate a 6-digit code and store it on the practice
+      const code = String(Math.floor(100000 + Math.random() * 900000));
+      // Save the code + email to the practice (not visible to user)
+      setIntegrations({
+        ...integrations,
+        email_verification_code: code,
+        email_verification_email: email,
+        email_verification_sent_at: new Date().toISOString(),
+      });
+      // Send the verification email via our SMTP function
+      await supabase.functions.invoke('send-email', {
+        body: {
+          to: email,
+          type: 'new_patient_welcome', // reuse template for now
+          practice_id: practice?.id,
+          data: { patient_name: `Verification code: ${code}` },
+          subject: `${practice?.name || 'Pathir'} — Email Verification Code: ${code}`,
+        },
+      });
+      toast.success(`Verification code sent to ${email}`);
+      setEmailStep('code');
+    } catch (err) {
+      toast.error('Failed to send verification code');
+      console.error(err);
+    } finally {
+      setIsSendingCode(false);
+    }
+  }
+
+  function handleVerifyCode() {
+    const stored = integrations.email_verification_code;
+    if (!stored || emailCode.trim() !== stored) {
+      toast.error('Incorrect code — please check and try again');
+      return;
+    }
+    // Check expiry (10 minutes)
+    const sentAt = integrations.email_verification_sent_at;
+    if (sentAt && Date.now() - new Date(sentAt).getTime() > 10 * 60 * 1000) {
+      toast.error('Code expired — please request a new one');
+      setEmailStep('input');
+      return;
+    }
+    // Verified!
+    setIntegrations({
+      ...integrations,
+      email_enabled: true,
+      email_verified: true,
+      email_from: integrations.email_verification_email,
+      email_verification_code: null,
+      email_verification_sent_at: null,
+    });
+    setEmailStep('verified');
+    toast.success('Email verified and enabled');
+    setExpanded(null);
+  }
+
+  function handleEmailDisconnect() {
+    setIntegrations({
+      ...integrations,
+      email_enabled: false,
+      email_verified: false,
+      email_from: null,
+    });
+    setEmailStep('input');
+    toast.success('Email disconnected');
+    setExpanded(null);
+  }
+
   // ── All items in one flat list ──
   const items = [
     {
@@ -124,11 +207,13 @@ export default function IntegrationsTab({
     },
     {
       key: 'email_enabled',
-      icon: <Mail className="w-4 h-4 text-slate-400" />,
+      icon: <Mail className="w-4 h-4 text-blue-600" />,
       label: 'Email',
-      desc: 'Requires email verification — coming soon',
-      type: 'toggle',
-      disabled: true,
+      desc: integrations.email_enabled && integrations.email_verified
+        ? `Verified — sending as ${practice?.name || 'your practice'} via ${integrations.email_from || practice?.email || 'practice email'}`
+        : 'Send appointment confirmations, follow-ups, and payment links to patients',
+      type: 'connect',
+      isConnected: !!integrations.email_enabled && !!integrations.email_verified,
     },
     {
       key: 'stripe',
@@ -259,6 +344,95 @@ export default function IntegrationsTab({
                           </div>
                         );
                       })()}
+
+                      {/* ── Email Verification ── */}
+                      {item.key === 'email_enabled' && (
+                        <div className="space-y-3 max-w-sm">
+                          {emailStep === 'verified' ? (
+                            <>
+                              <div className="flex items-center gap-2 p-3 rounded-lg bg-emerald-50 border border-emerald-100">
+                                <CheckCircle2 className="w-4 h-4 text-emerald-600" />
+                                <div>
+                                  <p className="text-xs font-medium text-emerald-800">Email verified</p>
+                                  <p className="text-xs text-emerald-600">{integrations.email_from || practice?.email}</p>
+                                </div>
+                              </div>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs text-slate-500">Change email address</Label>
+                                <div className="flex gap-2">
+                                  <Input
+                                    type="email"
+                                    placeholder="new@example.com"
+                                    value={emailAddress !== (integrations.email_from || practice?.email) ? emailAddress : ''}
+                                    onChange={(e) => setEmailAddress(e.target.value)}
+                                    className="text-xs h-8"
+                                  />
+                                  <Button size="sm" className="h-8 text-xs shrink-0" variant="outline"
+                                    disabled={isSendingCode || !emailAddress.trim() || emailAddress === (integrations.email_from || practice?.email)}
+                                    onClick={handleSendVerification}>
+                                    {isSendingCode ? <Loader2 className="w-3 h-3 animate-spin" /> : 'Verify new'}
+                                  </Button>
+                                </div>
+                              </div>
+                              <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50"
+                                onClick={handleEmailDisconnect}>
+                                Disconnect email
+                              </Button>
+                            </>
+                          ) : emailStep === 'code' ? (
+                            <>
+                              <p className="text-xs text-slate-500">
+                                We sent a 6-digit code to <strong>{integrations.email_verification_email || emailAddress}</strong>. Enter it below.
+                              </p>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs text-slate-500">Verification code</Label>
+                                <div className="flex gap-2">
+                                  <Input
+                                    placeholder="123456"
+                                    value={emailCode}
+                                    onChange={(e) => setEmailCode(e.target.value.replace(/\D/g, '').slice(0, 6))}
+                                    className="font-mono text-xs h-8 w-32 tracking-widest"
+                                    maxLength={6}
+                                  />
+                                  <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+                                    disabled={emailCode.length !== 6}
+                                    onClick={handleVerifyCode}>
+                                    Verify
+                                  </Button>
+                                </div>
+                              </div>
+                              <button className="text-xs text-slate-400 hover:text-slate-600 underline underline-offset-2"
+                                onClick={() => { setEmailStep('input'); setEmailCode(''); }}>
+                                Use a different email
+                              </button>
+                            </>
+                          ) : (
+                            <>
+                              <p className="text-xs text-slate-500">
+                                Enter the email address patients will see when they receive emails from your practice.
+                                {practice?.email && (
+                                  <> Current email on file: <strong>{practice.email.replace(/^(.)(.*)(@.*)$/, (_, a, b, c) => a + b.replace(/./g, '*') + c)}</strong></>
+                                )}
+                              </p>
+                              <div className="space-y-1.5">
+                                <Label className="text-xs text-slate-500">Practice email</Label>
+                                <Input
+                                  type="email"
+                                  placeholder="reception@example.com"
+                                  value={emailAddress}
+                                  onChange={(e) => setEmailAddress(e.target.value)}
+                                  className="text-xs h-8"
+                                />
+                              </div>
+                              <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+                                disabled={isSendingCode || !emailAddress.trim() || !emailAddress.includes('@')}
+                                onClick={handleSendVerification}>
+                                {isSendingCode ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" /> Sending code</> : 'Send verification code'}
+                              </Button>
+                            </>
+                          )}
+                        </div>
+                      )}
 
                       {/* ── Stripe ── */}
                       {item.key === 'stripe' && (

@@ -65,17 +65,21 @@ Deno.serve(async (req) => {
     }
 
     // Format transcript for storage: [{role, content, timestamp}]
-    const formattedTranscript = transcript.map((t: {
-      role: string; message: string; time_in_call_secs?: number;
-    }) => ({
-      role: t.role,
-      content: t.message,
-      timestamp: t.time_in_call_secs || 0,
-    }));
+    // Filter out tool-call-only entries (null/empty message)
+    const formattedTranscript = transcript
+      .filter((t: { message?: string | null }) => t.message != null && t.message !== "")
+      .map((t: {
+        role: string; message: string; time_in_call_secs?: number;
+      }) => ({
+        role: t.role,
+        content: t.message,
+        timestamp: t.time_in_call_secs || 0,
+      }));
 
     // Extract summary from analysis (ElevenLabs generates this automatically)
-    const summary = analysis.summary
+    const summary = analysis.transcript_summary
       || analysis.call_summary
+      || analysis.summary
       || generateSimpleSummary(formattedTranscript);
 
     // Determine outcome from analysis or transcript content
@@ -225,6 +229,7 @@ Deno.serve(async (req) => {
     );
   } catch (err) {
     console.error("[ELEVENLABS CONVERSATION]", err);
+    console.error("[ELEVENLABS CONVERSATION] detail:", err instanceof Error ? err.message : String(err));
     return new Response(
       JSON.stringify({ success: false, message: "Internal error" }),
       { status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -246,7 +251,7 @@ function generateSimpleSummary(
 
   // Take the first meaningful user message (skip very short ones)
   const userMessages = transcript
-    .filter((t) => t.role === "user" && t.content.length > 5)
+    .filter((t) => t.role === "user" && t.content && t.content.length > 5)
     .slice(0, 3);
 
   if (userMessages.length === 0) return "Brief interaction, no substantial user input.";
@@ -275,7 +280,7 @@ function classifyOutcome(
 
   // Fallback: scan agent messages for booking confirmation language
   const agentText = transcript
-    .filter((t) => t.role === "agent")
+    .filter((t) => t.role === "agent" && t.content)
     .map((t) => t.content.toLowerCase())
     .join(" ");
 

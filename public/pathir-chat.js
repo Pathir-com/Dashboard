@@ -874,8 +874,11 @@
     if (this.isOpen) {
       this.dom.win.classList.add('pathir-open');
       this.dom.bubble.setAttribute('aria-label', 'Close chat');
-      /* Connect if not already connected */
+      /* Connect if not already connected (new session after close) */
       if (!this.client.connected && !this.isConnecting) {
+        /* Clear previous messages for a fresh conversation */
+        this.dom.messages.innerHTML = '';
+        this._hasGreeted = false;
         this._connect(true);
       } else {
         this.dom.textInput.focus();
@@ -883,6 +886,13 @@
     } else {
       this.dom.win.classList.remove('pathir-open');
       this.dom.bubble.setAttribute('aria-label', 'Open chat');
+      /* Disconnect the WebSocket so the ElevenLabs session ends
+         and the post-call webhook fires with the transcript. */
+      if (this.client.connected) {
+        this.client.disconnect();
+        this.client.connected = false;
+        this.isConnecting = false;
+      }
     }
   };
 

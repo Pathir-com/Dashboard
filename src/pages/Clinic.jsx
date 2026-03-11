@@ -4,7 +4,7 @@ import { base44 } from '@/api/base44Client';
 import { Link, useNavigate } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { useAuth } from '@/lib/AuthContext';
-import { getPractice as getSupabasePractice, listEnquiries as listSupabaseEnquiries, updateEnquiry as updateSupabaseEnquiry } from '@/lib/supabaseData';
+import { getPractice as getSupabasePractice, listEnquiries as listSupabaseEnquiries, updateEnquiry as updateSupabaseEnquiry, listEmailEvents } from '@/lib/supabaseData';
 import { Badge } from '@/components/ui/badge';
 import { Button } from '@/components/ui/button';
 import { Accordion, AccordionContent, AccordionItem, AccordionTrigger } from '@/components/ui/accordion';
@@ -18,6 +18,7 @@ import AppointmentStatus from '../components/clinic/AppointmentStatus';
 import ClinicSidebar from '../components/clinic/ClinicSidebar';
 import ClinicSettings from '../components/clinic/ClinicSettings';
 import DiaryView from '../components/clinic/DiaryView';
+import EmailFollowUp from '../components/clinic/EmailFollowUp';
 
 export default function Clinic() {
   const [currentView, setCurrentView] = useState('enquiries');
@@ -453,6 +454,18 @@ export default function Clinic() {
                              <AccordionContent className="mt-1">
                                <AppointmentStatus enquiry={enquiry} />
                              </AccordionContent>
+                            </AccordionItem>
+
+                            <AccordionItem value="emails" className="border-none">
+                              <AccordionTrigger className="bg-slate-50 rounded-lg px-4 py-2 hover:no-underline">
+                                <div className="text-xs font-medium text-slate-500 uppercase tracking-wide flex items-center gap-2">
+                                  <Mail className="w-4 h-4" />
+                                  Follow-up
+                                </div>
+                              </AccordionTrigger>
+                              <AccordionContent className="bg-slate-50 rounded-lg p-4 mt-1">
+                                <EmailFollowUp enquiryId={enquiry.id} practiceId={selectedPractice?.id} patientName={enquiry.patient_name} contactId={enquiry.contact_id} />
+                              </AccordionContent>
                             </AccordionItem>
                           </Accordion>
                         </motion.div>
