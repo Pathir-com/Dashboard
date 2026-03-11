@@ -135,7 +135,75 @@ export async function updatePractice(id, updates) {
     .single();
 
   if (error) throw error;
+
+  // Sync price_list → services table so the booking system stays current
+  if (updates.price_list) {
+    syncServicesFromPriceList(id, updates.price_list);
+  }
+
   return data;
+}
+
+/**
+ * Sync the practice's price_list JSONB into the services table.
+ * Any service in the price list that doesn't exist in the services table
+ * gets created; existing ones are updated; removed ones are deleted.
+ * Runs in the background — does not block the save.
+ */
+async function syncServicesFromPriceList(practiceId, priceList) {
+  try {
+    // Fetch current services for this practice
+    const { data: existing } = await supabase
+      .from('services')
+      .select('id, name, category, price_pence, duration_minutes')
+      .eq('practice_id', practiceId);
+
+    const existingByName = {};
+    for (const svc of (existing || [])) {
+      existingByName[svc.name.toLowerCase()] = svc;
+    }
+
+    const seenNames = new Set();
+
+    for (const item of (priceList || [])) {
+      const name = item.service_name || '';
+      if (!name) continue;
+      seenNames.add(name.toLowerCase());
+
+      const pricePence = item.price ? Math.round(parseFloat(item.price) * 100) : null;
+      const category = (item.category || 'general').toLowerCase();
+
+      const match = existingByName[name.toLowerCase()];
+      if (match) {
+        // Update if price or category changed
+        if (match.price_pence !== pricePence || match.category !== category) {
+          await supabase.from('services').update({
+            category,
+            price_pence: pricePence,
+          }).eq('id', match.id);
+        }
+      } else {
+        // Create new service
+        await supabase.from('services').insert({
+          practice_id: practiceId,
+          name,
+          category,
+          price_pence: pricePence,
+          duration_minutes: 30, // sensible default
+          buffer_minutes: 5,
+        });
+      }
+    }
+
+    // Delete services no longer in the price list
+    for (const svc of (existing || [])) {
+      if (!seenNames.has(svc.name.toLowerCase())) {
+        await supabase.from('services').delete().eq('id', svc.id);
+      }
+    }
+  } catch (err) {
+    console.error('Failed to sync services from price list:', err);
+  }
 }
 
 export async function deletePractice(id) {

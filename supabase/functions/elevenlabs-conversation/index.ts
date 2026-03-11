@@ -28,26 +28,36 @@ Deno.serve(async (req) => {
   }
 
   try {
-    const body = await req.json();
+    const rawText = await req.text();
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    /*
-     * ElevenLabs sends a payload like:
-     * {
-     *   conversation_id: "conv_xxx",
-     *   agent_id: "agent_xxx",
-     *   status: "done" | "error",
-     *   transcript: [{ role: "agent"|"user", message: "...", time_in_call_secs: 12.3 }],
-     *   analysis: { summary: "...", data_collection: {...}, outcome: "..." },
-     *   metadata: { start_time: "...", call_duration_secs: 120 }
-     * }
-     */
+    /* Log the raw payload for debugging — store it in a conversation record's metadata */
+    let rawBody;
+    try {
+      rawBody = JSON.parse(rawText);
+    } catch {
+      console.error("[ELEVENLABS CONVERSATION] Failed to parse JSON:", rawText.slice(0, 500));
+      return new Response(
+        JSON.stringify({ success: false, message: "Invalid JSON" }),
+        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
+    }
+
+    /* ElevenLabs may wrap the payload under a 'data' key or send it flat.
+       Handle both structures gracefully. */
+    // deno-lint-ignore no-explicit-any
+    const body = (rawBody as any).data || rawBody;
+
+    console.error("[ELEVENLABS CONVERSATION] Top-level keys:", JSON.stringify(Object.keys(rawBody)));
+    console.error("[ELEVENLABS CONVERSATION] conversation_id:", body.conversation_id);
+
     const conversationId = body.conversation_id;
     const transcript = body.transcript || [];
     const analysis = body.analysis || {};
     const metadata = body.metadata || {};
 
     if (!conversationId) {
+      console.error("[ELEVENLABS CONVERSATION] No conversation_id. Raw keys:", Object.keys(rawBody));
       return new Response(
         JSON.stringify({ success: false, message: "No conversation_id" }),
         { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -91,7 +101,10 @@ Deno.serve(async (req) => {
     existing = byElId;
 
     if (!existing) {
-      // Fallback: most recent active conversation for this agent's practice
+      /* Fallback: find the most recent conversation for this practice that
+         does NOT yet have an elevenlabs_conversation_id set. This is the one
+         created by lookup_caller_phone / lookup_web_visitor during the call.
+         We order by created_at DESC so the newest session is matched first. */
       const agentId = body.agent_id;
       if (agentId) {
         const { data: practice } = await db
@@ -104,7 +117,7 @@ Deno.serve(async (req) => {
             .from("conversations")
             .select("id")
             .eq("practice_id", practice.id)
-            .eq("status", "active")
+            .is("elevenlabs_conversation_id", null)
             .order("created_at", { ascending: false })
             .limit(1)
             .single();
