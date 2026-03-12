@@ -102,9 +102,23 @@ export default function IntegrationsTab({
       const res = await fetch(`https://graph.facebook.com/v19.0/${fbPageId}?access_token=${fbAccessToken}`);
       if (!res.ok) throw new Error('Invalid Page ID or Access Token');
       const page = await res.json();
-      setIntegrations({ ...integrations, facebook_page_id: fbPageId.trim(), facebook_access_token: fbAccessToken.trim(), facebook_page_name: page.name || '', facebook_enabled: true });
+      const updated = { ...integrations, facebook_page_id: fbPageId.trim(), facebook_access_token: fbAccessToken.trim(), facebook_page_name: page.name || '', facebook_enabled: true };
+      const { error } = await supabase.from('practices').update({ integrations: updated }).eq('id', practice?.id);
+      if (error) throw error;
+      setIntegrations(updated);
       toast.success(`Facebook connected: ${page.name || fbPageId}`); setExpanded(null);
     } catch (err) { toast.error(err.message); } finally { setIsVerifying(false); }
+  }
+
+  async function handleFacebookDisconnect() {
+    const { facebook_page_id, facebook_access_token, facebook_page_name, facebook_enabled, ...rest } = integrations;
+    try {
+      const { error } = await supabase.from('practices').update({ integrations: rest }).eq('id', practice?.id);
+      if (error) throw error;
+      setIntegrations(rest);
+      setFbPageId(''); setFbAccessToken('');
+      toast.success('Facebook Messenger disconnected'); setExpanded(null);
+    } catch (err) { toast.error('Failed to disconnect Facebook'); console.error(err); }
   }
 
   async function handleInstagramConnect() {
@@ -114,9 +128,23 @@ export default function IntegrationsTab({
       const res = await fetch(`https://graph.facebook.com/v19.0/${igBusinessId}?fields=name,username&access_token=${igAccessToken}`);
       if (!res.ok) throw new Error('Invalid Business Account ID or Access Token');
       const account = await res.json();
-      setIntegrations({ ...integrations, instagram_business_id: igBusinessId.trim(), instagram_access_token: igAccessToken.trim(), instagram_username: account.username || '', instagram_enabled: true });
+      const updated = { ...integrations, instagram_business_id: igBusinessId.trim(), instagram_access_token: igAccessToken.trim(), instagram_username: account.username || '', instagram_enabled: true };
+      const { error } = await supabase.from('practices').update({ integrations: updated }).eq('id', practice?.id);
+      if (error) throw error;
+      setIntegrations(updated);
       toast.success(`Instagram connected: @${account.username || igBusinessId}`); setExpanded(null);
     } catch (err) { toast.error(err.message); } finally { setIsVerifying(false); }
+  }
+
+  async function handleInstagramDisconnect() {
+    const { instagram_business_id, instagram_access_token, instagram_username, instagram_enabled, ...rest } = integrations;
+    try {
+      const { error } = await supabase.from('practices').update({ integrations: rest }).eq('id', practice?.id);
+      if (error) throw error;
+      setIntegrations(rest);
+      setIgBusinessId(''); setIgAccessToken('');
+      toast.success('Instagram disconnected'); setExpanded(null);
+    } catch (err) { toast.error('Failed to disconnect Instagram'); console.error(err); }
   }
 
   // ── Email verification ──
@@ -524,6 +552,12 @@ export default function IntegrationsTab({
                       {/* ── Facebook ── */}
                       {item.key === 'facebook_enabled' && (
                         <div className="space-y-3 max-w-sm">
+                          {connected.facebook_enabled && (
+                            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-50 text-xs text-green-700">
+                              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                              <span>Connected: {integrations.facebook_page_name || integrations.facebook_page_id}</span>
+                            </div>
+                          )}
                           <div className="space-y-1.5">
                             <Label className="text-xs text-slate-500">Page ID</Label>
                             <Input placeholder="123456789012345" value={fbPageId} onChange={(e) => setFbPageId(e.target.value)} className="font-mono text-xs h-8" />
@@ -540,16 +574,42 @@ export default function IntegrationsTab({
                               Needs <code className="bg-slate-200 px-1 rounded">pages_messaging</code>.
                             </span>
                           </div>
-                          <Button size="sm" className="h-7 text-xs bg-[#1877F2] hover:bg-[#166ad8] text-white"
-                            disabled={isVerifying || !fbPageId || !fbAccessToken} onClick={handleFacebookConnect}>
-                            {isVerifying ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" /> Verifying</> : 'Connect'}
-                          </Button>
+                          {connected.facebook_enabled && (
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-slate-500">Webhook URL (set in Meta App Dashboard)</Label>
+                              <div className="flex items-center gap-1.5">
+                                <Input readOnly value="https://amxcposgqlmgapzoopze.supabase.co/functions/v1/meta-webhook" className="font-mono text-xs h-8 bg-slate-50 text-slate-500" />
+                                <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => { navigator.clipboard.writeText('https://amxcposgqlmgapzoopze.supabase.co/functions/v1/meta-webhook'); toast.success('Webhook URL copied'); }}>
+                                  <Copy className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" className="h-7 text-xs bg-[#1877F2] hover:bg-[#166ad8] text-white"
+                              disabled={isVerifying || !fbPageId || !fbAccessToken} onClick={handleFacebookConnect}>
+                              {isVerifying ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" /> Verifying</> :
+                                connected.facebook_enabled ? <><Check className="w-3 h-3 mr-1.5" /> Update</> : 'Connect'}
+                            </Button>
+                            {connected.facebook_enabled && (
+                              <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50"
+                                onClick={handleFacebookDisconnect}>
+                                Disconnect
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       )}
 
                       {/* ── Instagram ── */}
                       {item.key === 'instagram_enabled' && (
                         <div className="space-y-3 max-w-sm">
+                          {connected.instagram_enabled && (
+                            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-50 text-xs text-green-700">
+                              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                              <span>Connected: @{integrations.instagram_username || integrations.instagram_business_id}</span>
+                            </div>
+                          )}
                           <div className="space-y-1.5">
                             <Label className="text-xs text-slate-500">Business Account ID</Label>
                             <Input placeholder="17841400..." value={igBusinessId} onChange={(e) => setIgBusinessId(e.target.value)} className="font-mono text-xs h-8" />
@@ -566,10 +626,30 @@ export default function IntegrationsTab({
                               Needs <code className="bg-slate-200 px-1 rounded">instagram_manage_messages</code>.
                             </span>
                           </div>
-                          <Button size="sm" className="h-7 text-xs bg-[#E1306C] hover:bg-[#c72c60] text-white"
-                            disabled={isVerifying || !igBusinessId || !igAccessToken} onClick={handleInstagramConnect}>
-                            {isVerifying ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" /> Verifying</> : 'Connect'}
-                          </Button>
+                          {connected.instagram_enabled && (
+                            <div className="space-y-1.5">
+                              <Label className="text-xs text-slate-500">Webhook URL (same as Facebook — set once in Meta App Dashboard)</Label>
+                              <div className="flex items-center gap-1.5">
+                                <Input readOnly value="https://amxcposgqlmgapzoopze.supabase.co/functions/v1/meta-webhook" className="font-mono text-xs h-8 bg-slate-50 text-slate-500" />
+                                <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => { navigator.clipboard.writeText('https://amxcposgqlmgapzoopze.supabase.co/functions/v1/meta-webhook'); toast.success('Webhook URL copied'); }}>
+                                  <Copy className="w-3.5 h-3.5" />
+                                </Button>
+                              </div>
+                            </div>
+                          )}
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" className="h-7 text-xs bg-[#E1306C] hover:bg-[#c72c60] text-white"
+                              disabled={isVerifying || !igBusinessId || !igAccessToken} onClick={handleInstagramConnect}>
+                              {isVerifying ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" /> Verifying</> :
+                                connected.instagram_enabled ? <><Check className="w-3 h-3 mr-1.5" /> Update</> : 'Connect'}
+                            </Button>
+                            {connected.instagram_enabled && (
+                              <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50"
+                                onClick={handleInstagramDisconnect}>
+                                Disconnect
+                              </Button>
+                            )}
+                          </div>
                         </div>
                       )}
                     </div>
