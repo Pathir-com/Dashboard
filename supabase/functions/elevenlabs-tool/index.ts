@@ -17,6 +17,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { getUKDateTime } from "../_shared/clock.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -263,15 +264,17 @@ async function handleLookupCallerPhone(db: any, args: any) {
 
   const practiceHours = getPracticeHoursStatus(practice.opening_hours, practice.holiday_hours);
   const integrations = practice.integrations || {};
+  const clock = getUKDateTime();
   const base = {
     success: true, practice_id: practice.id, practice_name: practice.name,
     practice_email: practice.email || integrations.email_from || null,
     practice_hours: practiceHours,
     email_enabled: !!integrations.email_enabled,
     stripe_connected: !!integrations.stripe_connected,
+    current_datetime: clock,
   };
 
-  if (!caller_phone) return { ...base, found: false, message: "No caller phone number available." };
+  if (!caller_phone) return { ...base, found: false, message: `${clock.summary}\nNo caller phone number available.` };
 
   const contact = await findContactByPhone(db, practice.id, caller_phone);
 
@@ -484,12 +487,14 @@ async function handleSearchAvailability(db: any, args: any) {
   }
 
   const hoursStatus = getPracticeHoursStatus(practice.opening_hours, practice.holiday_hours);
+  const searchClock = getUKDateTime();
   return {
     success: true,
     slots: slots.slice(0, 6),
     service_id: service.id,
     service_name: service.name,
     practice_hours: hoursStatus,
+    current_datetime: searchClock,
     message: slots.length === 0 ? "No available slots found for the requested criteria." : `Found ${slots.length} available slot(s).`,
   };
 }
@@ -500,10 +505,13 @@ async function findSlots(db: any, opts: any) {
   const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   // deno-lint-ignore no-explicit-any
   const slots: any[] = [];
-  const today = new Date();
+  // Use UK timezone for "today" so slot search starts from the correct local date
+  const clock = getUKDateTime();
+  const todayISO = clock.date_iso; // e.g. "2026-03-12"
+  const todayDate = new Date(todayISO + "T12:00:00Z"); // noon UTC to avoid DST edge cases
 
   for (let d = 1; d <= searchDays; d++) {
-    const date = new Date(today.getTime() + d * 86400000);
+    const date = new Date(todayDate.getTime() + d * 86400000);
     const iso = date.toISOString().slice(0, 10);
     const dayName = days[date.getUTCDay()];
 
@@ -689,12 +697,14 @@ async function handleLookupWebVisitor(db: any, args: any) {
 
   const practiceHours = getPracticeHoursStatus(practice.opening_hours, practice.holiday_hours);
   const pIntegrations = practice.integrations || {};
+  const clock = getUKDateTime();
   const base = {
     success: true, practice_id: practice.id, practice_name: practice.name,
     practice_email: practice.email || pIntegrations.email_from || null,
     practice_hours: practiceHours,
     email_enabled: !!pIntegrations.email_enabled,
     stripe_connected: !!pIntegrations.stripe_connected,
+    current_datetime: clock,
   };
 
   // Try to find the contact by phone or email
