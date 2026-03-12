@@ -144,7 +144,6 @@ export default function ClinicSettings({ practice, onUpdate }) {
             hours={hours} setHours={setHours}
             holidayHours={holidayHours} setHolidayHours={setHolidayHours}
             integrations={integrations}
-            pearDental={pearDental} setPearDental={setPearDental}
             practiceType={practiceType} setPracticeType={setPracticeType}
           />
         )}
@@ -166,6 +165,8 @@ export default function ClinicSettings({ practice, onUpdate }) {
               practice={practice}
               integrations={integrations}
               setIntegrations={setIntegrations}
+              pearDental={pearDental}
+              setPearDental={setPearDental}
               isAssigningNumber={isAssigningNumber}
               onAssignNumber={async () => {
                 setIsAssigningNumber(true);

@@ -6,7 +6,7 @@ import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import {
   Phone, MessageCircle, Mail, Globe, Facebook, Instagram,
-  CreditCard, Loader2, Check, AlertCircle, ChevronDown, Copy, CheckCircle2,
+  CreditCard, Loader2, Check, AlertCircle, ChevronDown, Copy, CheckCircle2, Link2,
 } from 'lucide-react';
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
@@ -18,6 +18,8 @@ export default function IntegrationsTab({
   setIntegrations,
   onAssignNumber,
   isAssigningNumber,
+  pearDental,
+  setPearDental,
 }) {
   const twilioNumber = practice?.twilio_phone_number;
   const hasNumber = !!twilioNumber;
@@ -35,6 +37,10 @@ export default function IntegrationsTab({
 
   const [embedCopied, setEmbedCopied] = useState(false);
 
+  // PMS form state
+  const [pmsApiKey, setPmsApiKey] = useState(pearDental?.api_key || '');
+  const [pmsPracticeCode, setPmsPracticeCode] = useState(pearDental?.practice_code || '');
+
   // Email verification state
   const [emailAddress, setEmailAddress] = useState(practice?.email || '');
   const [emailCode, setEmailCode] = useState('');
@@ -51,6 +57,7 @@ export default function IntegrationsTab({
     facebook_enabled: !!integrations.facebook_page_id,
     instagram_enabled: !!integrations.instagram_business_id,
     stripe: !!integrations.stripe_connected,
+    pms: !!pearDental?.connected,
   };
 
   function toggle(key) {
@@ -59,6 +66,7 @@ export default function IntegrationsTab({
     if (key === 'stripe') { setStripeKey(integrations.stripe_publishable_key || ''); setStripeSecret(integrations.stripe_secret_key || ''); }
     if (key === 'facebook_enabled') { setFbPageId(integrations.facebook_page_id || ''); setFbAccessToken(integrations.facebook_access_token || ''); }
     if (key === 'instagram_enabled') { setIgBusinessId(integrations.instagram_business_id || ''); setIgAccessToken(integrations.instagram_access_token || ''); }
+    if (key === 'pms') { setPmsApiKey(pearDental?.api_key || ''); setPmsPracticeCode(pearDental?.practice_code || ''); }
   }
 
   // ── Handlers ──
@@ -145,6 +153,31 @@ export default function IntegrationsTab({
       setIgBusinessId(''); setIgAccessToken('');
       toast.success('Instagram disconnected'); setExpanded(null);
     } catch (err) { toast.error('Failed to disconnect Instagram'); console.error(err); }
+  }
+
+  // ── PMS (Pearl Dental) ──
+  async function handlePmsConnect() {
+    const key = pmsApiKey.trim();
+    const code = pmsPracticeCode.trim();
+    if (!key || !code) { toast.error('Please enter your API key and practice code'); return; }
+    const updated = { api_key: key, practice_code: code, connected: true };
+    try {
+      const { error } = await supabase.from('practices').update({ pear_dental: updated }).eq('id', practice?.id);
+      if (error) throw error;
+      setPearDental(updated);
+      toast.success('Pearl Dental connected'); setExpanded(null);
+    } catch (err) { toast.error('Failed to connect Pearl Dental'); console.error(err); }
+  }
+
+  async function handlePmsDisconnect() {
+    const updated = { api_key: '', practice_code: '', connected: false };
+    try {
+      const { error } = await supabase.from('practices').update({ pear_dental: updated }).eq('id', practice?.id);
+      if (error) throw error;
+      setPearDental(updated);
+      setPmsApiKey(''); setPmsPracticeCode('');
+      toast.success('Pearl Dental disconnected'); setExpanded(null);
+    } catch (err) { toast.error('Failed to disconnect Pearl Dental'); console.error(err); }
   }
 
   // ── Email verification ──
@@ -322,6 +355,14 @@ export default function IntegrationsTab({
       desc: connected.instagram_enabled ? `Connected${integrations.instagram_username ? ` — @${integrations.instagram_username}` : ''}` : 'Receive Instagram DMs in your inbox',
       type: 'connect',
       isConnected: connected.instagram_enabled,
+    },
+    {
+      key: 'pms',
+      icon: <Link2 className="w-4 h-4 text-green-600" />,
+      label: 'Practice Management System',
+      desc: connected.pms ? `Pearl Dental — ${pearDental?.practice_code || 'connected'}` : 'Sync appointments and patient records with Pearl Dental',
+      type: 'connect',
+      isConnected: connected.pms,
     },
   ];
 
@@ -646,6 +687,42 @@ export default function IntegrationsTab({
                             {connected.instagram_enabled && (
                               <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50"
                                 onClick={handleInstagramDisconnect}>
+                                Disconnect
+                              </Button>
+                            )}
+                          </div>
+                        </div>
+                      )}
+
+                      {/* ── PMS (Pearl Dental) ── */}
+                      {item.key === 'pms' && (
+                        <div className="space-y-3 max-w-sm">
+                          {connected.pms && (
+                            <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-50 text-xs text-green-700">
+                              <CheckCircle2 className="w-3.5 h-3.5 shrink-0" />
+                              <span>Connected — Practice code: {pearDental?.practice_code}</span>
+                            </div>
+                          )}
+                          <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-500">API Key</Label>
+                            <Input type="password" placeholder="pd_live_xxxxxxxxxxxxxxxx" value={pmsApiKey} onChange={(e) => setPmsApiKey(e.target.value)} className="font-mono text-xs h-8" />
+                          </div>
+                          <div className="space-y-1.5">
+                            <Label className="text-xs text-slate-500">Practice Code</Label>
+                            <Input placeholder="e.g. CLINIC001" value={pmsPracticeCode} onChange={(e) => setPmsPracticeCode(e.target.value)} className="text-xs h-8" />
+                          </div>
+                          <div className="flex items-start gap-2 p-2.5 rounded-lg bg-slate-50 text-xs text-slate-400">
+                            <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                            <span>Connect your Pearl Dental PMS to sync appointments and patient records.</span>
+                          </div>
+                          <div className="flex items-center gap-2">
+                            <Button size="sm" className="h-7 text-xs bg-green-600 hover:bg-green-700 text-white"
+                              disabled={!pmsApiKey || !pmsPracticeCode} onClick={handlePmsConnect}>
+                              {connected.pms ? <><Check className="w-3 h-3 mr-1.5" /> Update</> : 'Test & Connect'}
+                            </Button>
+                            {connected.pms && (
+                              <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50"
+                                onClick={handlePmsDisconnect}>
                                 Disconnect
                               </Button>
                             )}
