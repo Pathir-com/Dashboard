@@ -159,7 +159,47 @@ Deno.serve(async (req) => {
       });
     }
 
-    console.log(`[ELEVENLABS WEBHOOK] Enquiry ${enquiry.id} for ${practiceName} — ${patientName} (${callerNumber}) conv=${conversationId}`);
+    /* ── Insert into conversations table for RAG + dashboard ── */
+    const channel = data.metadata?.channel || "phone";
+    const conversationRow: Record<string, unknown> = {
+      practice_id: practiceId,
+      contact_id: contact.id,
+      elevenlabs_conversation_id: conversationId || null,
+      channel,
+      status: "completed",
+      outcome: "enquiry_only",
+      summary: summary || null,
+      transcript: conversation,
+      caller_name: channel === "web_chat"
+        ? (data.metadata?.visitor_name || patientName)
+        : patientName,
+      caller_phone: channel === "web_chat" ? null : (callerNumber || null),
+      started_at: new Date(Date.now() - (data.call_duration_secs || 0) * 1000).toISOString(),
+      ended_at: new Date().toISOString(),
+      duration_seconds: data.call_duration_secs || null,
+      enquiry_id: enquiry.id,
+      metadata: {
+        source: channel === "web_chat" ? "web_chat" : "phone",
+        urgency: isUrgent ? "urgent" : "normal",
+        ...(data.metadata?.contact_id ? { widget_contact_id: data.metadata.contact_id } : {}),
+      },
+    };
+
+    // Use the contact_id from widget metadata if provided (web chat matched contact)
+    if (data.metadata?.contact_id) {
+      conversationRow.contact_id = data.metadata.contact_id;
+    }
+
+    const { error: convError } = await adminClient
+      .from("conversations")
+      .insert(conversationRow);
+
+    if (convError) {
+      console.error("[ELEVENLABS WEBHOOK] Failed to insert conversation:", convError);
+      // Non-fatal — enquiry was already created
+    }
+
+    console.log(`[ELEVENLABS WEBHOOK] Enquiry ${enquiry.id} for ${practiceName} — ${patientName} (${callerNumber}) conv=${conversationId} channel=${channel}`);
     return new Response(
       JSON.stringify({ message: "Enquiry created", enquiryId: enquiry.id, contactId: contact.id }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },

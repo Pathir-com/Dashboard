@@ -110,6 +110,50 @@ export async function findOrCreateContact(
 }
 
 /**
+ * Match a contact by identity fields (name, DOB, postcode) for web chat.
+ * Returns match status and contact if found.
+ */
+export async function matchContactByIdentity(
+  adminClient: SupabaseClient,
+  { practiceId, name, dob, postcode, phone }: {
+    practiceId: string;
+    name: string;
+    dob: string;       // ISO date string (YYYY-MM-DD)
+    postcode: string;
+    phone?: string;
+  },
+): Promise<{ match: "exact" | "ambiguous" | "none"; contact: any; candidateCount: number }> {
+  // Query contacts matching name + DOB + postcode
+  const { data: candidates } = await adminClient
+    .from("contacts")
+    .select("*")
+    .eq("practice_id", practiceId)
+    .ilike("name", name)
+    .eq("date_of_birth", dob)
+    .ilike("postcode", postcode);
+
+  const matches = candidates || [];
+
+  if (matches.length === 1) {
+    return { match: "exact", contact: matches[0], candidateCount: 1 };
+  }
+
+  if (matches.length > 1) {
+    // If phone provided, narrow down
+    if (phone) {
+      const normalized = normalizePhone(phone);
+      const phoneMatch = matches.find((c) => c.phone === normalized);
+      if (phoneMatch) {
+        return { match: "exact", contact: phoneMatch, candidateCount: matches.length };
+      }
+    }
+    return { match: "ambiguous", contact: null, candidateCount: matches.length };
+  }
+
+  return { match: "none", contact: null, candidateCount: 0 };
+}
+
+/**
  * Retrieve all previous enquiries for a contact, across all channels.
  * Returns them in chronological order with conversation history.
  */

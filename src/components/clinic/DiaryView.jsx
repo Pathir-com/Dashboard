@@ -1,12 +1,11 @@
 /**
  * Purpose:
- *   Diary/calendar view showing confirmed appointments and pending requests
- *   across practitioner columns. Reads from the normalised appointments table
- *   with a fallback to legacy enquiry-based bookings.
+ *   Diary/calendar view showing booked appointments across practitioner columns.
+ *   Reads from the normalised appointments table with a fallback to legacy
+ *   enquiry-based bookings.
  *
  * Dependencies:
- *   - @/lib/supabaseData (listPractitioners, listAppointmentsForDay,
- *     listPendingRequests, confirmAppointmentRequest)
+ *   - @/lib/supabaseData (listPractitioners, listAppointmentsForDay)
  *   - @tanstack/react-query (data fetching + caching)
  *   - date-fns (date arithmetic and formatting)
  *
@@ -14,29 +13,26 @@
  *   - src/pages/Clinic.jsx (rendered when currentView === 'diary')
  *
  * Changes:
+ *   2026-03-16: Removed pending state — bookings go straight to confirmed.
  *   2026-03-11: Upgraded to read from appointments + appointment_requests tables,
- *               duration-proportional blocks, pending request display, confirm flow.
+ *               duration-proportional blocks.
  *   2026-03-10: Initial creation — enquiry-based appointments only.
  */
 
 import React, { useState, useMemo } from 'react';
-import { useQuery, useQueryClient } from '@tanstack/react-query';
+import { useQuery } from '@tanstack/react-query';
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
   isSameMonth, isSameDay, addMonths, subMonths, isToday,
   addDays, subDays,
 } from 'date-fns';
 import {
-  ChevronLeft, ChevronRight, User, Clock, CheckCircle2, AlertTriangle, X,
+  ChevronLeft, ChevronRight, User, X,
 } from 'lucide-react';
 import { Badge } from '@/components/ui/badge';
-import { toast } from 'sonner';
-import { supabase } from '@/lib/supabase';
 import {
   listPractitioners,
   listAppointmentsForDay,
-  listPendingRequests,
-  confirmAppointmentRequest,
 } from '@/lib/supabaseData';
 
 // Hours to display in the day grid (8am–6pm)
@@ -54,9 +50,8 @@ const COLOURS = [
   { solid: 'bg-cyan-100 text-cyan-800 border-cyan-200', dashed: 'bg-cyan-50 text-cyan-700 border-cyan-300' },
 ];
 
-function colourFor(index, isPending) {
-  const palette = COLOURS[index % COLOURS.length];
-  return isPending ? palette.dashed : palette.solid;
+function colourFor(index) {
+  return COLOURS[index % COLOURS.length].solid;
 }
 
 /** Convert a time string or Date to total minutes since midnight. */
@@ -85,8 +80,6 @@ export default function DiaryView({ enquiries, practice }) {
   const [currentMonth, setCurrentMonth] = useState(new Date());
   const [selectedDay, setSelectedDay] = useState(new Date());
   const [selectedBlock, setSelectedBlock] = useState(null); // popover state
-  const [isConfirming, setIsConfirming] = useState(false);
-  const queryClient = useQueryClient();
 
   const practiceId = practice?.id;
   const dateStr = format(selectedDay, 'yyyy-MM-dd');
@@ -101,18 +94,10 @@ export default function DiaryView({ enquiries, practice }) {
     staleTime: 60_000,
   });
 
-  // Confirmed/pending appointments for the selected day
+  // Appointments for the selected day
   const { data: dbAppointments = [] } = useQuery({
     queryKey: ['appointments', practiceId, dateStr],
     queryFn: () => listAppointmentsForDay(practiceId, dateStr),
-    enabled: !!practiceId,
-    staleTime: 15_000,
-  });
-
-  // Pending requests awaiting confirmation
-  const { data: pendingRequests = [] } = useQuery({
-    queryKey: ['pending-requests', practiceId],
-    queryFn: () => listPendingRequests(practiceId),
     enabled: !!practiceId,
     staleTime: 15_000,
   });
@@ -122,9 +107,8 @@ export default function DiaryView({ enquiries, practice }) {
   const contactIds = useMemo(() => {
     const ids = new Set();
     dbAppointments.forEach(a => { if (a.contact?.id) ids.add(a.contact.id); });
-    pendingRequests.forEach(r => { if (r.contact?.id) ids.add(r.contact.id); });
     return [...ids];
-  }, [dbAppointments, pendingRequests]);
+  }, [dbAppointments]);
 
   const { data: emailEvents = [] } = useQuery({
     queryKey: ['email-events-diary', practiceId, contactIds.join(',')],
@@ -204,42 +188,7 @@ export default function DiaryView({ enquiries, practice }) {
       });
     });
 
-    // 2. Pending requests with a chosen_slot on the selected day
-    pendingRequests.forEach(req => {
-      const slot = req.chosen_slot;
-      if (!slot?.date || slot.date !== dateStr) return;
-
-      // Resolve practitioner — if slot's practitioner_id doesn't match any known
-      // practitioner (e.g. it was deleted/re-synced), fall back to the first one
-      let resolvedPracId = slot.practitioner_id || req.preferred_practitioner?.id;
-      let resolvedPracName = slot.practitioner_name || req.preferred_practitioner?.name || '';
-      const pracExists = practitioners.some(p => p.id === resolvedPracId);
-      if (!pracExists && practitioners.length > 0) {
-        resolvedPracId = practitioners[0].id;
-        resolvedPracName = resolvedPracName || practitioners[0].displayName;
-      }
-
-      blocks.push({
-        key: `req-${req.id}`,
-        id: req.id,
-        type: 'pending',
-        requestData: req, // keep original for the confirm flow
-        practitionerId: resolvedPracId,
-        practitionerName: resolvedPracName,
-        patientName: req.contact?.name || 'Unknown Patient',
-        patientPhone: req.contact?.phone || '',
-        contactId: req.contact?.id || null,
-        serviceName: req.service?.name || '',
-        startMin: toMinutes(slot.start_time),
-        endMin: toMinutes(slot.end_time),
-        source: req.source,
-        notes: req.notes,
-        isUrgent: req.is_urgent,
-        status: req.status,
-      });
-    });
-
-    // 3. Legacy: enquiry-based appointments (fallback for old data)
+    // 2. Legacy: enquiry-based appointments (fallback for old data)
     (enquiries || []).forEach(e => {
       if (!e.appointment_datetime) return;
       try {
@@ -275,13 +224,7 @@ export default function DiaryView({ enquiries, practice }) {
     });
 
     return blocks.sort((a, b) => a.startMin - b.startMin);
-  }, [dbAppointments, pendingRequests, enquiries, dateStr, selectedDay, practitioners, emailStatusByContact]);
-
-  // ---- Pending requests without a specific time (sidebar list only) ----
-  const untimedRequests = pendingRequests.filter(req => {
-    const slot = req.chosen_slot;
-    return !slot?.date || !slot?.start_time;
-  });
+  }, [dbAppointments, enquiries, dateStr, selectedDay, practitioners, emailStatusByContact]);
 
   // ---- Mini calendar: which days have appointments ----
   // Use a simple check — dots for days with blocks
@@ -295,98 +238,7 @@ export default function DiaryView({ enquiries, practice }) {
     // From DB appointments (only if same as selected day, since we only fetch one day)
     const dbCount = isSameDay(day, selectedDay) ? dbAppointments.length : 0;
 
-    // From pending requests with a chosen_slot on this day
-    const reqCount = pendingRequests.filter(r =>
-      r.chosen_slot?.date === format(day, 'yyyy-MM-dd')
-    ).length;
-
-    return legacyCount + dbCount + reqCount;
-  };
-
-  // ---- Confirm handler ----
-  const handleConfirm = async (block) => {
-    if (block.type !== 'pending' || !block.requestData) return;
-    setIsConfirming(true);
-
-    const req = block.requestData;
-    const slot = req.chosen_slot;
-
-    // Use the resolved practitioner ID from the block (already validated against
-    // the practitioners list) rather than the raw slot practitioner_id which
-    // may reference a deleted/orphaned practitioner
-    const practitionerId = block.practitionerId || slot.practitioner_id || req.preferred_practitioner?.id;
-
-    try {
-      const appointment = await confirmAppointmentRequest(req.id, {
-        practiceId,
-        practitionerId,
-        serviceId: req.service?.id,
-        contactId: req.contact?.id,
-        startsAt: `${slot.date}T${slot.start_time}:00Z`,
-        endsAt: `${slot.date}T${slot.end_time}:00Z`,
-        source: req.source || 'phone',
-      });
-
-      toast.success(`Confirmed: ${block.patientName} at ${minutesToDisplay(block.startMin)}`);
-
-      // Send confirmation email to the patient if they have an email
-      if (req.contact?.id) {
-        sendConfirmationEmail(req.contact.id, {
-          patientName: block.patientName,
-          serviceName: block.serviceName,
-          date: slot.date,
-          startTime: slot.start_time,
-          practitionerName: block.practitionerName,
-          enquiryId: req.enquiry_id,
-        });
-      }
-
-      // Close popover first, then refetch so the confirmed block appears
-      setSelectedBlock(null);
-      await queryClient.refetchQueries({ queryKey: ['appointments', practiceId, dateStr] });
-      await queryClient.refetchQueries({ queryKey: ['pending-requests', practiceId] });
-      queryClient.invalidateQueries({ queryKey: ['enquiries'] });
-    } catch (err) {
-      toast.error(`Failed to confirm: ${err.message}`);
-    } finally {
-      setIsConfirming(false);
-    }
-  };
-
-  // ---- Send confirmation email (fire-and-forget) ----
-  const sendConfirmationEmail = async (contactId, details) => {
-    try {
-      // Get the patient's email from the contact record
-      const { data: contact } = await supabase
-        .from('contacts')
-        .select('email')
-        .eq('id', contactId)
-        .single();
-
-      if (!contact?.email) return; // no email on file, skip silently
-
-      const dateObj = new Date(`${details.date}T${details.startTime}:00`);
-      const dateTimeStr = format(dateObj, "EEEE d MMMM 'at' h:mm a");
-
-      await supabase.functions.invoke('send-email', {
-        body: {
-          to: contact.email,
-          type: 'appointment_confirmation',
-          practice_id: practiceId,
-          enquiry_id: details.enquiryId || null,
-          contact_id: contactId,
-          data: {
-            patient_name: details.patientName,
-            service: details.serviceName,
-            date_time: dateTimeStr,
-            practitioner: details.practitionerName,
-          },
-        },
-      });
-      toast.success('Confirmation email sent');
-    } catch (err) {
-      console.error('Failed to send confirmation email', err);
-    }
+    return legacyCount + dbCount;
   };
 
   // ---- Calendar helpers ----
@@ -402,7 +254,7 @@ export default function DiaryView({ enquiries, practice }) {
       {/* ===== Left sidebar: mini calendar + sidebar lists ===== */}
       <div className="w-64 shrink-0 border-r border-slate-100 bg-white flex flex-col px-4 py-8 overflow-y-auto">
         <h1 className="text-base font-semibold text-slate-900 mb-1">Diary</h1>
-        <p className="text-xs text-slate-400 mb-6">Appointments & pending requests</p>
+        <p className="text-xs text-slate-400 mb-6">Appointments</p>
 
         {/* Month navigation */}
         <div className="flex items-center justify-between mb-3">
@@ -467,11 +319,7 @@ export default function DiaryView({ enquiries, practice }) {
                 <button
                   key={b.key}
                   onClick={() => setSelectedBlock(b)}
-                  className={`w-full text-left text-xs rounded-lg px-2.5 py-2 border transition-colors hover:bg-slate-100 ${
-                    b.type === 'pending'
-                      ? 'bg-amber-50 border-amber-200'
-                      : 'bg-slate-50 border-slate-100'
-                  }`}
+                  className="w-full text-left text-xs rounded-lg px-2.5 py-2 border transition-colors hover:bg-slate-100 bg-slate-50 border-slate-100"
                 >
                   <p className="font-medium text-slate-800 truncate">{b.patientName}</p>
                   <p className="text-slate-400">
@@ -479,47 +327,12 @@ export default function DiaryView({ enquiries, practice }) {
                     {b.endMin ? ` – ${minutesToDisplay(b.endMin)}` : ''}
                   </p>
                   {b.serviceName && <p className="text-slate-400 truncate">{b.serviceName}</p>}
-                  {b.type === 'pending' && (
-                    <Badge className="mt-1 bg-amber-100 text-amber-700 hover:bg-amber-100 text-[10px] px-1.5 py-0">
-                      Pending
-                    </Badge>
-                  )}
                 </button>
               ))}
             </div>
           )}
         </div>
 
-        {/* Untimed pending requests (no specific slot chosen) */}
-        {untimedRequests.length > 0 && (
-          <div className="mt-6">
-            <p className="text-[10px] font-semibold text-amber-500 uppercase tracking-widest mb-2">
-              Awaiting time — {untimedRequests.length} request{untimedRequests.length !== 1 ? 's' : ''}
-            </p>
-            <div className="space-y-1.5">
-              {untimedRequests.map(req => (
-                <div
-                  key={req.id}
-                  className="text-xs bg-amber-50 rounded-lg px-2.5 py-2 border border-amber-200"
-                >
-                  <p className="font-medium text-slate-800 truncate">
-                    {req.contact?.name || 'Unknown'}
-                    {req.is_urgent && (
-                      <AlertTriangle className="inline w-3 h-3 text-rose-500 ml-1" />
-                    )}
-                  </p>
-                  {req.service?.name && <p className="text-slate-400 truncate">{req.service.name}</p>}
-                  {req.preferred_date && (
-                    <p className="text-slate-400">Pref: {req.preferred_date}</p>
-                  )}
-                  <Badge className="mt-1 bg-amber-100 text-amber-700 hover:bg-amber-100 text-[10px] px-1.5 py-0">
-                    {req.status === 'asap' ? 'ASAP' : 'Pending'}
-                  </Badge>
-                </div>
-              ))}
-            </div>
-          </div>
-        )}
       </div>
 
       {/* ===== Right: day grid view ===== */}
@@ -619,7 +432,6 @@ export default function DiaryView({ enquiries, practice }) {
                         const top = ((b.startMin - GRID_START_HOUR * 60) / 60) * HOUR_HEIGHT;
                         const durationMin = Math.max(b.endMin - b.startMin, 15); // minimum 15 min display
                         const height = Math.max((durationMin / 60) * HOUR_HEIGHT, 28); // minimum 28px
-                        const isPending = b.type === 'pending';
 
                         return (
                           <button
@@ -629,8 +441,7 @@ export default function DiaryView({ enquiries, practice }) {
                             className={`
                               absolute left-1 right-1 rounded-lg border px-2 py-1 text-xs
                               overflow-hidden cursor-pointer transition-shadow hover:shadow-md z-10
-                              ${colourFor(pIdx, isPending)}
-                              ${isPending ? 'border-dashed border-2' : ''}
+                              ${colourFor(pIdx)}
                             `}
                           >
                             <p className="font-semibold truncate">{b.patientName}</p>
@@ -638,9 +449,6 @@ export default function DiaryView({ enquiries, practice }) {
                               {minutesToDisplay(b.startMin)}
                               {b.serviceName ? ` · ${b.serviceName}` : ''}
                             </p>
-                            {isPending && height >= 48 && (
-                              <p className="text-[10px] opacity-60 mt-0.5">Pending confirmation</p>
-                            )}
                             {/* Email status indicator */}
                             {b.emailStatus && height >= 36 && (
                               <span className={`inline-flex items-center gap-0.5 text-[9px] mt-0.5 ${
@@ -759,28 +567,11 @@ export default function DiaryView({ enquiries, practice }) {
               )}
             </div>
 
-            {/* Status badge + action buttons */}
-            <div className="flex items-center justify-between pt-3 border-t border-slate-100">
-              <Badge className={`text-[10px] px-2 py-0.5 ${
-                selectedBlock.type === 'pending'
-                  ? 'bg-amber-100 text-amber-700'
-                  : 'bg-emerald-100 text-emerald-700'
-              }`}>
-                {selectedBlock.type === 'pending'
-                  ? (selectedBlock.status === 'asap' ? 'ASAP' : 'Pending')
-                  : 'Confirmed'}
+            {/* Status badge */}
+            <div className="flex items-center pt-3 border-t border-slate-100">
+              <Badge className="text-[10px] px-2 py-0.5 bg-emerald-100 text-emerald-700">
+                Booked
               </Badge>
-
-              {selectedBlock.type === 'pending' && (
-                <button
-                  onClick={() => handleConfirm(selectedBlock)}
-                  disabled={isConfirming}
-                  className="flex items-center gap-1.5 text-xs font-medium text-emerald-700 bg-emerald-50 border border-emerald-200 hover:bg-emerald-100 px-3 py-1.5 rounded-lg transition-colors disabled:opacity-50"
-                >
-                  <CheckCircle2 className="w-3.5 h-3.5" />
-                  {isConfirming ? 'Confirming...' : 'Confirm Booking'}
-                </button>
-              )}
             </div>
           </div>
         </div>

@@ -1,18 +1,19 @@
 /**
  * Purpose:
- *     Create and manage appointment requests (pending bookings).
- *     Handles creating requests from voice/chat, and confirming/declining from dashboard.
+ *     Create and manage appointment requests. Auto-confirms bookings when a
+ *     chosen slot is provided; otherwise queues as ASAP for manual handling.
  *
  * Dependencies:
- *     - Supabase (appointment_requests, appointments, contacts, services, practitioners)
+ *     - Supabase (appointment_requests, appointments, contacts, services, practitioners, enquiries)
  *     - api/_lib/practice-hours.js (check if submitted outside hours)
  *
  * Used by:
  *     - api/vapi-server-url.js (request_appointment tool)
  *     - api/chatbase-action.js (chat booking action)
- *     - Dashboard UI (confirm/decline/reschedule)
+ *     - Dashboard UI (decline/reschedule)
  *
  * Changes:
+ *     2026-03-16: Auto-confirm bookings with a chosen slot — removed pending state
  *     2026-03-10: Initial creation
  */
 
@@ -98,8 +99,17 @@ async function handleCreate(db, req, res) {
 
   const outsideHours = !hoursStatus.is_open_now;
 
-  // Determine status: urgent with no slot → asap
-  const status = is_urgent && !chosen_slot ? "asap" : "pending";
+  // Auto-confirm when a slot is chosen; otherwise asap for urgent, pending for the rest
+  const hasSlot = chosen_slot && chosen_slot.date && chosen_slot.start_time;
+  const status = hasSlot
+    ? "confirmed"
+    : is_urgent
+      ? "asap"
+      : "pending";
+
+  const requestNotes = outsideHours
+    ? `${notes || ""} [Submitted outside practice hours]`.trim()
+    : (notes || null);
 
   const { data: request, error } = await db
     .from("appointment_requests")
@@ -112,12 +122,11 @@ async function handleCreate(db, req, res) {
       preferred_time: preferred_time || (chosen_slot?.start_time || null),
       is_urgent,
       status,
+      confirmed_at: hasSlot ? new Date().toISOString() : null,
       suggested_slots: suggested_slots || [],
       chosen_slot: chosen_slot || null,
       backup_slot: backup_slot || null,
-      notes: outsideHours
-        ? `${notes || ""} [Submitted outside practice hours]`.trim()
-        : (notes || null),
+      notes: requestNotes,
       submitted_outside_hours: outsideHours,
       source,
     })
@@ -127,6 +136,35 @@ async function handleCreate(db, req, res) {
   if (error) {
     console.error("[APPOINTMENT-REQUEST] Create failed:", error);
     return res.status(500).json({ message: "Failed to create appointment request" });
+  }
+
+  // If slot was chosen, immediately create a confirmed appointment
+  if (hasSlot) {
+    const { error: apptError } = await db
+      .from("appointments")
+      .insert({
+        practice_id,
+        practitioner_id: chosen_slot.practitioner_id || preferred_practitioner_id || null,
+        service_id: service_id || null,
+        contact_id: contact_id || null,
+        starts_at: `${chosen_slot.date}T${chosen_slot.start_time}:00`,
+        ends_at: `${chosen_slot.date}T${chosen_slot.end_time}:00`,
+        status: "confirmed",
+        source,
+        notes: requestNotes,
+      });
+
+    if (apptError) {
+      console.error("[APPOINTMENT-REQUEST] Failed to create appointment:", apptError);
+    }
+
+    // Update the linked enquiry so the inbox shows "Confirmed"
+    if (contact_id) {
+      await db
+        .from("enquiries")
+        .update({ appointment_status: "confirmed", is_completed: true })
+        .eq("appointment_request_id", request.id);
+    }
   }
 
   console.log(`[APPOINTMENT-REQUEST] Created ${request.id} (${status}) for practice ${practice_id}`);

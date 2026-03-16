@@ -19,6 +19,7 @@ import ClinicSidebar from '../components/clinic/ClinicSidebar';
 import ClinicSettings from '../components/clinic/ClinicSettings';
 import DiaryView from '../components/clinic/DiaryView';
 import EmailFollowUp from '../components/clinic/EmailFollowUp';
+import ChatView from '../components/clinic/ChatView';
 
 export default function Clinic() {
   const [currentView, setCurrentView] = useState('enquiries');
@@ -267,6 +268,8 @@ export default function Clinic() {
           />
         ) : currentView === 'diary' ? (
           <DiaryView enquiries={enquiries} practice={selectedPractice} />
+        ) : currentView === 'chat' ? (
+          <ChatView practice={selectedPractice} />
         ) : (
           <div className="max-w-3xl mx-auto px-4 py-12">
             {currentUser?.role === 'admin' && (

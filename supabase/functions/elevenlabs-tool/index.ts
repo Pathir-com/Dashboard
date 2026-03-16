@@ -527,13 +527,13 @@ async function findSlots(db: any, opts: any) {
     const dayHours = (openingHours || []).find((h: { day: string }) => h.day === dayName);
     if (!dayHours || !dayHours.is_open) continue;
 
-    // Get existing appointments for this day
+    // Get existing appointments for this day (exclude only cancelled — matches API)
     const { data: existing } = await db
       .from("appointments").select("practitioner_id, starts_at, ends_at")
       .eq("practice_id", practice_id)
       .gte("starts_at", `${iso}T00:00:00`)
       .lt("starts_at", `${iso}T23:59:59`)
-      .in("status", ["confirmed", "pending"]);
+      .neq("status", "cancelled");
 
     for (const prac of practitioners) {
       // working_hours can be an array [{day, is_working, start_time, end_time}] or {} (empty/unset)
@@ -546,12 +546,13 @@ async function findSlots(db: any, opts: any) {
       const startMin = timeToMinutes(wh?.start_time || dayHours.open_time);
       const endMin = timeToMinutes(wh?.end_time || dayHours.close_time);
 
-      // Build blocked windows for this practitioner
+      // Build blocked windows for this practitioner (add buffer like API version)
+      const bufferMins = opts.service?.buffer_minutes || 10;
       const blocked = (existing || [])
         .filter((a: { practitioner_id: string }) => a.practitioner_id === prac.id)
         .map((a: { starts_at: string; ends_at: string }) => ({
           start: timeToMinutes(a.starts_at.slice(11, 16)),
-          end: timeToMinutes(a.ends_at.slice(11, 16)),
+          end: timeToMinutes(a.ends_at.slice(11, 16)) + bufferMins,
         }));
 
       // Generate 15-min interval slots
@@ -623,7 +624,9 @@ async function handleRequestAppointment(db: any, args: any) {
     try { slot = JSON.parse(slot); } catch { slot = null; }
   }
 
-  const status = is_urgent && !slot ? "asap" : "pending";
+  // Auto-confirm when a slot is chosen; otherwise asap for urgent, pending for the rest
+  const hasSlot = slot && slot.date && slot.start_time;
+  const status = hasSlot ? "confirmed" : (is_urgent ? "asap" : "pending");
   const requestNotes = [notes || "", outsideHours ? "[Submitted outside practice hours]" : ""].filter(Boolean).join(" ").trim() || null;
 
   const { data: request, error } = await db.from("appointment_requests").insert({
@@ -632,6 +635,7 @@ async function handleRequestAppointment(db: any, args: any) {
     service_id: service_id || null,
     is_urgent,
     status,
+    confirmed_at: hasSlot ? new Date().toISOString() : null,
     chosen_slot: slot || null,
     preferred_date: slot?.date || null,
     preferred_time: slot?.start_time || null,
@@ -642,11 +646,53 @@ async function handleRequestAppointment(db: any, args: any) {
 
   if (error) { console.error("[REQUEST APPOINTMENT]", error); return { success: false, message: "Failed to create appointment request." }; }
 
-  /* Link the booking back to the enquiry so the dashboard shows it.
-     The dashboard reads selected_service, appointment_datetime, and
-     appointment_status to render the appointment card. Status starts
-     as 'pending' (yellow) — turns 'confirmed' (green) when the practice
-     confirms it in the diary. Do NOT set is_completed here. */
+  // If slot was chosen, check for conflicts then create a confirmed appointment
+  if (hasSlot) {
+    const slotStart = `${slot.date}T${slot.start_time}:00`;
+    const slotEnd = `${slot.date}T${slot.end_time || slot.start_time}:00`;
+
+    // Conflict check: any non-cancelled appointment overlapping this window for the same practitioner
+    let hasConflict = false;
+    if (slot.practitioner_id) {
+      const { data: conflicts } = await db
+        .from("appointments")
+        .select("id")
+        .eq("practitioner_id", slot.practitioner_id)
+        .neq("status", "cancelled")
+        .lt("starts_at", slotEnd)
+        .gt("ends_at", slotStart)
+        .limit(1);
+      hasConflict = (conflicts || []).length > 0;
+    }
+
+    if (hasConflict) {
+      // Slot was taken between search and booking — downgrade to pending for manual review
+      await db.from("appointment_requests").update({ status: "pending", confirmed_at: null }).eq("id", request.id);
+      return {
+        success: true,
+        request_id: request.id,
+        status: "pending",
+        submitted_outside_hours: outsideHours,
+        enquiry_id,
+        message: "That slot was just taken by another patient. I've sent your request to the team and they'll find you the next available slot.",
+      };
+    }
+
+    const { error: apptError } = await db.from("appointments").insert({
+      practice_id,
+      practitioner_id: slot.practitioner_id || null,
+      service_id: service_id || null,
+      contact_id: contact_id || null,
+      starts_at: slotStart,
+      ends_at: slotEnd,
+      status: "confirmed",
+      source: "phone",
+      notes: requestNotes,
+    });
+    if (apptError) console.error("[REQUEST APPOINTMENT] Failed to create appointment:", apptError);
+  }
+
+  /* Link the booking back to the enquiry so the dashboard shows it. */
   if (enquiry_id) {
     let serviceName = "Appointment";
     if (service_id) {
@@ -656,10 +702,13 @@ async function handleRequestAppointment(db: any, args: any) {
 
     const enquiryUpdate: Record<string, unknown> = {
       selected_service: serviceName,
-      appointment_status: "pending",
+      appointment_status: hasSlot ? "confirmed" : "pending",
       appointment_request_id: request.id,
       message: `Appointment request: ${serviceName} — ${slot ? `${slot.date} at ${slot.start_time}` : "ASAP"}`,
     };
+    if (hasSlot) {
+      enquiryUpdate.is_completed = true;
+    }
     if (slot?.date && slot?.start_time) {
       enquiryUpdate.appointment_datetime = `${slot.date}T${slot.start_time}:00`;
     }
@@ -674,7 +723,9 @@ async function handleRequestAppointment(db: any, args: any) {
   }
 
   let message;
-  if (status === "asap") {
+  if (hasSlot) {
+    message = "That's all booked in for you. You'll receive a confirmation text shortly.";
+  } else if (status === "asap") {
     message = outsideHours
       ? "I've put in an urgent request for you. The practice is currently closed but the team will see it as soon as they're in and get back to you."
       : "I've put in an urgent request for you. The team will see it and get back to you as soon as possible.";

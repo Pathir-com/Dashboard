@@ -610,3 +610,46 @@ export async function updateAppointmentStatus(appointmentId, status) {
   if (error) throw error;
   return data;
 }
+
+// --------------- Web Chat Conversations ---------------
+
+/**
+ * List web chat conversations for a practice, most recent first.
+ * Joins contact for visitor name/DOB display.
+ */
+export async function listWebChatConversations(practiceId) {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select(`
+      id, channel, status, outcome, summary, caller_name, caller_phone,
+      started_at, ended_at, duration_seconds, transcript, metadata,
+      elevenlabs_conversation_id, enquiry_id,
+      contact:contacts ( id, name, phone, date_of_birth, postcode )
+    `)
+    .eq('practice_id', practiceId)
+    .eq('channel', 'web_chat')
+    .order('started_at', { ascending: false })
+    .limit(100);
+
+  if (error) throw error;
+  return data || [];
+}
+
+/**
+ * Fetch a single conversation with its contact details.
+ */
+export async function getConversationTranscript(conversationId) {
+  const { data, error } = await supabase
+    .from('conversations')
+    .select(`
+      id, channel, status, outcome, summary, caller_name, caller_phone,
+      started_at, ended_at, duration_seconds, transcript, metadata,
+      elevenlabs_conversation_id, enquiry_id,
+      contact:contacts ( id, name, phone, date_of_birth, postcode )
+    `)
+    .eq('id', conversationId)
+    .single();
+
+  if (error) throw error;
+  return data;
+}

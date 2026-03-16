@@ -1,5 +1,5 @@
 /**
- * Pathir Chat Widget v1.0
+ * Pathir Chat Widget v2.0
  *
  * Purpose:
  *   Self-contained embeddable chat widget that connects to ElevenLabs
@@ -7,9 +7,12 @@
  *   replacement for Chatbase — dental practices embed this on their
  *   website with a single <script> tag.
  *
+ *   v2 adds: 3-stage intro flow (greeting → identity form → chat),
+ *   Poppy avatar, timestamps, terms link, unread badge, and animations.
+ *
  * Dependencies:
  *   - ElevenLabs Conversational AI WebSocket API (wss://api.elevenlabs.io)
- *   - Supabase Edge Function (chat-token) for signed URL generation
+ *   - Supabase Edge Function (chat-token) for signed URL + contact matching
  *
  * Usage:
  *   <script
@@ -19,9 +22,12 @@
  *     data-title="Spark Dental"
  *     data-subtitle="Ask Poppy anything"
  *     data-token-url="https://amxcposgqlmgapzoopze.supabase.co/functions/v1/chat-token"
+ *     data-avatar-url="https://example.com/poppy.png"
+ *     data-terms-url="https://pathir.com/legal-pages/terms-conditions"
  *   ></script>
  *
  * Changes:
+ *   2026-03-16: v2 — 3-stage flow, avatar, timestamps, terms, unread badge.
  *   2026-03-11: Initial creation — text + voice modes, streaming responses.
  */
 (function () {
@@ -35,13 +41,15 @@
   if (!scriptEl) return;
 
   var CFG = {
-    agentId:  scriptEl.getAttribute('data-agent-id')  || '',
-    accent:   scriptEl.getAttribute('data-accent')     || '#3072ff',
-    title:    scriptEl.getAttribute('data-title')      || 'Chat with us',
-    subtitle: scriptEl.getAttribute('data-subtitle')   || 'We typically reply instantly',
-    tokenUrl: scriptEl.getAttribute('data-token-url')  || '',
-    greeting: scriptEl.getAttribute('data-greeting')   || '',
-    position: scriptEl.getAttribute('data-position')   || 'right', // 'left' | 'right'
+    agentId:   scriptEl.getAttribute('data-agent-id')   || '',
+    accent:    scriptEl.getAttribute('data-accent')      || '#3072ff',
+    title:     scriptEl.getAttribute('data-title')       || 'Chat with us',
+    subtitle:  scriptEl.getAttribute('data-subtitle')    || 'We typically reply instantly',
+    tokenUrl:  scriptEl.getAttribute('data-token-url')   || '',
+    greeting:  scriptEl.getAttribute('data-greeting')    || '',
+    position:  scriptEl.getAttribute('data-position')    || 'right', // 'left' | 'right'
+    avatarUrl: scriptEl.getAttribute('data-avatar-url')  || 'https://amxcposgqlmgapzoopze.supabase.co/storage/v1/object/public/widget/poppy-avatar.png',
+    termsUrl:  scriptEl.getAttribute('data-terms-url')   || 'https://pathir.com/legal-pages/terms-conditions',
   };
 
   if (!CFG.agentId) {
@@ -61,6 +69,13 @@
     return 'rgba(' + r + ',' + g + ',' + b + ',' + alpha + ')';
   }
 
+  /** Format a Date as HH:mm */
+  function formatTime(d) {
+    var h = d.getHours().toString().padStart(2, '0');
+    var m = d.getMinutes().toString().padStart(2, '0');
+    return h + ':' + m;
+  }
+
   // ═══════════════════════════════════════════════════════════════════
   // §3  Scoped CSS — injected once into <head>
   // ═══════════════════════════════════════════════════════════════════
@@ -68,7 +83,6 @@
   function injectStyles() {
     var accent = CFG.accent;
     var side = CFG.position === 'left' ? 'left' : 'right';
-    var oppositeSide = side === 'left' ? 'right' : 'left';
 
     var css = [
       /* Reset within the widget */
@@ -82,10 +96,20 @@
       '  border: none; cursor: pointer;',
       '  box-shadow: 0 4px 16px ' + rgba(accent, 0.35) + ';',
       '  display: flex; align-items: center; justify-content: center;',
-      '  transition: transform 0.2s ease, box-shadow 0.2s ease;',
+      '  transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1), box-shadow 0.2s ease;',
       '}',
       '.pathir-bubble:hover { transform: scale(1.08); box-shadow: 0 6px 24px ' + rgba(accent, 0.45) + '; }',
-      '.pathir-bubble svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; }',
+      '.pathir-bubble svg { width: 26px; height: 26px; fill: none; stroke: currentColor; stroke-width: 2; stroke-linecap: round; stroke-linejoin: round; transition: transform 0.3s cubic-bezier(0.16, 1, 0.3, 1); }',
+      '.pathir-bubble.pathir-bubble-open svg { transform: rotate(90deg); }',
+
+      /* ── Unread badge ── */
+      '.pathir-unread {',
+      '  position: absolute; top: -4px; right: -4px;',
+      '  width: 18px; height: 18px; border-radius: 50%;',
+      '  background: #ef4444; color: #fff; font-size: 10px; font-weight: 700;',
+      '  display: flex; align-items: center; justify-content: center;',
+      '  border: 2px solid #fff; animation: pathir-fade-in 0.2s ease;',
+      '}',
 
       /* ── Chat window ── */
       '.pathir-window {',
@@ -97,7 +121,7 @@
       '  display: flex; flex-direction: column;',
       '  opacity: 0; transform: translateY(12px) scale(0.96);',
       '  pointer-events: none;',
-      '  transition: opacity 0.25s ease, transform 0.25s ease;',
+      '  transition: opacity 0.35s cubic-bezier(0.16, 1, 0.3, 1), transform 0.35s cubic-bezier(0.16, 1, 0.3, 1);',
       '}',
       '.pathir-window.pathir-open {',
       '  opacity: 1; transform: translateY(0) scale(1); pointer-events: auto;',
@@ -123,30 +147,49 @@
       /* ── Messages area ── */
       '.pathir-messages {',
       '  flex: 1; overflow-y: auto; padding: 16px 16px 8px;',
-      '  display: flex; flex-direction: column; gap: 8px;',
+      '  display: flex; flex-direction: column; gap: 4px;',
       '  min-height: 200px;',
       '}',
       '.pathir-messages::-webkit-scrollbar { width: 4px; }',
       '.pathir-messages::-webkit-scrollbar-thumb { background: #ddd; border-radius: 4px; }',
 
-      /* ── Message bubbles ── */
-      '.pathir-msg {',
-      '  max-width: 82%; padding: 10px 14px; font-size: 14px; line-height: 1.5;',
-      '  border-radius: 18px; word-wrap: break-word; white-space: pre-wrap;',
+      /* ── Message row (avatar + bubble) ── */
+      '.pathir-msg-row {',
+      '  display: flex; align-items: flex-end; gap: 8px;',
       '  animation: pathir-fade-in 0.2s ease;',
       '}',
+      '.pathir-msg-row-agent { align-self: flex-start; }',
+      '.pathir-msg-row-user { align-self: flex-end; flex-direction: row-reverse; }',
+      '.pathir-avatar {',
+      '  width: 28px; height: 28px; border-radius: 50%; flex-shrink: 0;',
+      '  object-fit: cover;',
+      '}',
+
+      /* ── Message bubbles ── */
+      '.pathir-msg {',
+      '  max-width: 78%; padding: 10px 14px; font-size: 14px; line-height: 1.5;',
+      '  border-radius: 18px; word-wrap: break-word; white-space: pre-wrap;',
+      '}',
       '.pathir-msg-agent {',
-      '  align-self: flex-start; background: #f1f3f5; color: #1a1a1a;',
+      '  background: #f1f3f5; color: #1a1a1a;',
       '  border-bottom-left-radius: 6px;',
       '}',
       '.pathir-msg-user {',
-      '  align-self: flex-end; background: ' + accent + '; color: #fff;',
+      '  background: ' + accent + '; color: #fff;',
       '  border-bottom-right-radius: 6px;',
       '}',
 
+      /* ── Timestamp ── */
+      '.pathir-timestamp {',
+      '  font-size: 10px; color: #bbb; margin-top: 2px; margin-bottom: 4px;',
+      '  padding: 0 36px;',
+      '}',
+      '.pathir-timestamp-agent { text-align: left; }',
+      '.pathir-timestamp-user { text-align: right; }',
+
       /* ── Typing indicator ── */
       '.pathir-typing {',
-      '  align-self: flex-start; padding: 10px 18px;',
+      '  align-self: flex-start; padding: 10px 18px; margin-left: 36px;',
       '  background: #f1f3f5; border-radius: 18px; border-bottom-left-radius: 6px;',
       '  display: flex; gap: 4px; align-items: center;',
       '}',
@@ -213,6 +256,34 @@
       '.pathir-footer a { color: #999; text-decoration: none; }',
       '.pathir-footer a:hover { text-decoration: underline; }',
 
+      /* ── Identity form (stage 2) ── */
+      '.pathir-form {',
+      '  padding: 16px; display: flex; flex-direction: column; gap: 12px;',
+      '  flex: 1; overflow-y: auto;',
+      '}',
+      '.pathir-form-intro {',
+      '  font-size: 14px; color: #555; line-height: 1.5; margin-bottom: 4px;',
+      '}',
+      '.pathir-form-field { display: flex; flex-direction: column; gap: 4px; }',
+      '.pathir-form-label { font-size: 12px; font-weight: 600; color: #555; }',
+      '.pathir-form-input {',
+      '  border: 1px solid #e5e7eb; border-radius: 10px;',
+      '  padding: 10px 14px; font-size: 14px; outline: none;',
+      '  transition: border-color 0.15s; background: #fafafa;',
+      '}',
+      '.pathir-form-input:focus { border-color: ' + accent + '; background: #fff; }',
+      '.pathir-form-input::placeholder { color: #bbb; }',
+      '.pathir-form-submit {',
+      '  padding: 12px; border-radius: 12px; border: none;',
+      '  background: ' + accent + '; color: #fff; font-size: 14px; font-weight: 600;',
+      '  cursor: pointer; transition: opacity 0.15s;',
+      '}',
+      '.pathir-form-submit:disabled { opacity: 0.5; cursor: default; }',
+      '.pathir-form-submit:not(:disabled):hover { opacity: 0.9; }',
+      '.pathir-form-error {',
+      '  font-size: 12px; color: #ef4444; text-align: center;',
+      '}',
+
       /* ── Animations ── */
       '@keyframes pathir-fade-in { from { opacity: 0; transform: translateY(4px); } to { opacity: 1; transform: translateY(0); } }',
       '@keyframes pathir-bounce { 0%,60%,100% { transform: translateY(0); } 30% { transform: translateY(-4px); } }',
@@ -239,7 +310,7 @@
     /** Chat bubble icon for the floating button */
     chat: '<svg viewBox="0 0 24 24"><path d="M21 11.5a8.38 8.38 0 0 1-.9 3.8 8.5 8.5 0 0 1-7.6 4.7 8.38 8.38 0 0 1-3.8-.9L3 21l1.9-5.7a8.38 8.38 0 0 1-.9-3.8 8.5 8.5 0 0 1 4.7-7.6 8.38 8.38 0 0 1 3.8-.9h.5a8.48 8.48 0 0 1 8 8v.5z"/></svg>',
 
-    /** X icon for close button */
+    /** X icon for close button / bubble when open */
     close: '<svg viewBox="0 0 24 24" fill="none"><line x1="18" y1="6" x2="6" y2="18"/><line x1="6" y1="6" x2="18" y2="18"/></svg>',
 
     /** Arrow-up icon for send button */
@@ -274,6 +345,7 @@
     /* ── Floating bubble ── */
     var bubble = el('button', 'pathir-bubble', ICONS.chat);
     bubble.setAttribute('aria-label', 'Open chat');
+    bubble.style.position = 'relative';
     root.appendChild(bubble);
 
     /* ── Chat window ── */
@@ -319,7 +391,11 @@
 
     /* Footer */
     var footer = el('div', 'pathir-footer');
-    footer.innerHTML = 'Powered by <a href="https://pathir.com" target="_blank" rel="noopener">Pathir</a>';
+    var footerHtml = 'Powered by <a href="https://pathir.com" target="_blank" rel="noopener">Pathir</a>';
+    if (CFG.termsUrl) {
+      footerHtml += ' &middot; <a href="' + CFG.termsUrl + '" target="_blank" rel="noopener">Terms</a>';
+    }
+    footer.innerHTML = footerHtml;
     win.appendChild(footer);
 
     root.appendChild(win);
@@ -329,11 +405,14 @@
       bubble: bubble,
       win: win,
       closeBtn: closeBtn,
+      header: header,
       messages: messages,
       status: status,
+      inputBar: inputBar,
       textInput: textInput,
       sendBtn: sendBtn,
       voiceBtn: voiceBtn,
+      footer: footer,
     };
   }
 
@@ -520,6 +599,9 @@
     this._streamBuffer = '';      // accumulates streaming agent text
     this._streamActive = false;
 
+    /* Extra dynamic variables set during the intro flow */
+    this.dynamicVars = {};
+
     /*
      * Deduplication flags — ElevenLabs sends BOTH agent_response and
      * agent_chat_response_part for every utterance. We must only render
@@ -541,16 +623,18 @@
   }
 
   /**
-   * Open a WebSocket session. If a tokenUrl is configured, fetches a
-   * signed URL first; otherwise connects directly with the agent ID.
+   * Open a WebSocket session. Accepts an optional pre-fetched signed URL.
+   * If signedUrl is provided, skips the token fetch entirely.
    */
-  ConversationClient.prototype.connect = function (textOnly) {
+  ConversationClient.prototype.connect = function (textOnly, signedUrl) {
     var self = this;
     self.textOnly = textOnly !== false;
 
     /* Determine WebSocket URL */
     var urlPromise;
-    if (self.tokenUrl) {
+    if (signedUrl) {
+      urlPromise = Promise.resolve(signedUrl);
+    } else if (self.tokenUrl) {
       urlPromise = fetch(self.tokenUrl + '?agent_id=' + encodeURIComponent(self.agentId))
         .then(function (r) {
           if (!r.ok) throw new Error('Token endpoint returned ' + r.status);
@@ -577,16 +661,25 @@
         }
 
         self.ws.onopen = function () {
+          /* Build dynamic variables: merge defaults with extras from intro flow */
+          var dynVars = {
+            channel: 'web_chat',
+            practice_id: self.practiceId || '',
+          };
+          var k;
+          for (k in self.dynamicVars) {
+            if (self.dynamicVars.hasOwnProperty(k)) {
+              dynVars[k] = self.dynamicVars[k];
+            }
+          }
+
           /* Send client initialisation with mode overrides and practice context */
           var initMsg = {
             type: 'conversation_initiation_client_data',
             conversation_config_override: {
               conversation: { text_only: self.textOnly },
             },
-            dynamic_variables: {
-              channel: 'web_chat',
-              practice_id: self.practiceId || '',
-            },
+            dynamic_variables: dynVars,
           };
           self.ws.send(JSON.stringify(initMsg));
         };
@@ -760,6 +853,7 @@
 
   // ═══════════════════════════════════════════════════════════════════
   // §8  Widget Controller — wires UI ↔ ConversationClient ↔ Audio
+  //     Now with 3-stage intro flow
   // ═══════════════════════════════════════════════════════════════════
 
   function PathirChatWidget() {
@@ -771,6 +865,18 @@
     this.voiceActive = false;
     this._currentAgentEl = null; // reference to the streaming message bubble
     this._hasGreeted = false;
+    this._unreadCount = 0;       // unread agent messages while closed
+
+    /* 3-stage flow state */
+    this.stage = 'intro';        // 'intro' | 'collecting_details' | 'chatting'
+    this._pendingMessage = '';   // user's first message, sent after form
+    this._signedUrl = null;      // pre-fetched signed URL from chat-token POST
+    this._contactId = null;
+    this._isReturningPatient = false;
+    this._visitorName = '';
+    this._visitorDob = '';
+    this._visitorPostcode = '';
+    this._visitorPhone = '';
   }
 
   /** Initialise the widget — inject styles, build DOM, bind events. */
@@ -795,19 +901,21 @@
     dom.bubble.addEventListener('click', function () { self.toggle(); });
     dom.closeBtn.addEventListener('click', function () { self.toggle(); });
 
-    /* Send on Enter or button click */
+    /* Send on Enter or button click — now stage-aware */
     dom.textInput.addEventListener('keydown', function (e) {
-      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); self._sendText(); }
+      if (e.key === 'Enter' && !e.shiftKey) { e.preventDefault(); self._handleSend(); }
     });
-    dom.sendBtn.addEventListener('click', function () { self._sendText(); });
+    dom.sendBtn.addEventListener('click', function () { self._handleSend(); });
 
     /* Enable/disable send button based on input content */
     dom.textInput.addEventListener('input', function () {
       dom.sendBtn.disabled = !dom.textInput.value.trim();
     });
 
-    /* Voice toggle */
-    dom.voiceBtn.addEventListener('click', function () { self._toggleVoice(); });
+    /* Voice toggle — only in chatting stage */
+    dom.voiceBtn.addEventListener('click', function () {
+      if (self.stage === 'chatting') self._toggleVoice();
+    });
   };
 
   /** Wire ConversationClient callbacks. */
@@ -817,13 +925,15 @@
     self.client.onConnect = function (convId) {
       self.isConnecting = false;
       self._setStatus('');
-      self.dom.textInput.focus();
+      if (self.stage === 'chatting') {
+        self.dom.textInput.focus();
+      }
     };
 
     self.client.onDisconnect = function (reason) {
       self.isConnecting = false;
       if (self.voiceActive) self._stopVoice();
-      self._setStatus('Disconnected');
+      if (self.stage === 'chatting') self._setStatus('Disconnected');
     };
 
     self.client.onError = function (msg) {
@@ -840,6 +950,11 @@
           self._currentAgentEl = null;
         } else {
           self._addMessage(text, 'agent');
+        }
+        /* Unread badge if widget is closed */
+        if (!self.isOpen) {
+          self._unreadCount++;
+          self._updateBadge();
         }
       } else {
         /* Streaming delta — update or create the bubble */
@@ -868,23 +983,29 @@
     };
   };
 
-  /** Open or close the chat window. Connects on first open. */
+  /** Open or close the chat window. */
   PathirChatWidget.prototype.toggle = function () {
     this.isOpen = !this.isOpen;
     if (this.isOpen) {
       this.dom.win.classList.add('pathir-open');
+      this.dom.bubble.innerHTML = ICONS.close;
+      this.dom.bubble.classList.add('pathir-bubble-open');
       this.dom.bubble.setAttribute('aria-label', 'Close chat');
-      /* Connect if not already connected (new session after close) */
-      if (!this.client.connected && !this.isConnecting) {
-        /* Clear previous messages for a fresh conversation */
-        this.dom.messages.innerHTML = '';
-        this._hasGreeted = false;
-        this._connect(true);
-      } else {
+
+      /* Reset unread */
+      this._unreadCount = 0;
+      this._updateBadge();
+
+      /* Show intro stage on first open */
+      if (this.stage === 'intro') {
+        this._showIntro();
+      } else if (this.stage === 'chatting') {
         this.dom.textInput.focus();
       }
     } else {
       this.dom.win.classList.remove('pathir-open');
+      this.dom.bubble.innerHTML = ICONS.chat;
+      this.dom.bubble.classList.remove('pathir-bubble-open');
       this.dom.bubble.setAttribute('aria-label', 'Open chat');
       /* Disconnect the WebSocket so the ElevenLabs session ends
          and the post-call webhook fires with the transcript. */
@@ -893,26 +1014,292 @@
         this.client.connected = false;
         this.isConnecting = false;
       }
+      /* Reset to intro for next conversation */
+      if (this.stage === 'chatting') {
+        this.stage = 'intro';
+        this._signedUrl = null;
+        this._contactId = null;
+        this._pendingMessage = '';
+        this._hasGreeted = false;
+        this._currentAgentEl = null;
+      }
     }
   };
 
-  /** Establish the WebSocket session. */
-  PathirChatWidget.prototype._connect = function (textOnly) {
+  // ─── Stage 1: Intro ───
+
+  /** Show the intro stage: avatar + greeting + input to type first message. */
+  PathirChatWidget.prototype._showIntro = function () {
     var self = this;
+    var dom = self.dom;
+
+    /* Clear body area */
+    dom.messages.innerHTML = '';
+    dom.status.textContent = '';
+
+    /* Show avatar + greeting as the first agent message */
+    var greetingText = CFG.greeting || 'Hi there! How can I help you today?';
+    self._addMessage(greetingText, 'agent');
+
+    /* Show the text input bar (already in DOM) */
+    dom.inputBar.style.display = '';
+    dom.voiceBtn.style.display = 'none'; // hide voice in intro
+    dom.textInput.placeholder = 'Type a message…';
+    dom.textInput.value = '';
+    dom.sendBtn.disabled = true;
+    dom.textInput.focus();
+  };
+
+  /** Handle send based on current stage. */
+  PathirChatWidget.prototype._handleSend = function () {
+    if (this.stage === 'intro') {
+      this._handleIntroSend();
+    } else if (this.stage === 'chatting') {
+      this._sendText();
+    }
+  };
+
+  /** Stage 1 → Stage 2: Capture user's first message, show form. */
+  PathirChatWidget.prototype._handleIntroSend = function () {
+    var text = this.dom.textInput.value.trim();
+    if (!text) return;
+
+    /* Show the user's message */
+    this._addMessage(text, 'user');
+    this._pendingMessage = text;
+    this.dom.textInput.value = '';
+    this.dom.sendBtn.disabled = true;
+
+    /* Transition to stage 2 */
+    this.stage = 'collecting_details';
+    this._showForm();
+  };
+
+  // ─── Stage 2: Collecting Details ───
+
+  /** Show the identity form inline. */
+  PathirChatWidget.prototype._showForm = function () {
+    var self = this;
+    var dom = self.dom;
+
+    /* Hide the input bar during form */
+    dom.inputBar.style.display = 'none';
+
+    /* Build form in the messages area */
+    var form = el('div', 'pathir-form');
+
+    var intro = el('div', 'pathir-form-intro');
+    intro.textContent = 'Before we start, could you share a few details so we can look up your records?';
+    form.appendChild(intro);
+
+    /* Name field */
+    var nameField = el('div', 'pathir-form-field');
+    nameField.appendChild(el('label', 'pathir-form-label', 'Full name'));
+    var nameInput = document.createElement('input');
+    nameInput.className = 'pathir-form-input';
+    nameInput.type = 'text';
+    nameInput.placeholder = 'e.g. John Smith';
+    nameInput.setAttribute('autocomplete', 'name');
+    nameField.appendChild(nameInput);
+    form.appendChild(nameField);
+
+    /* DOB field */
+    var dobField = el('div', 'pathir-form-field');
+    dobField.appendChild(el('label', 'pathir-form-label', 'Date of birth'));
+    var dobInput = document.createElement('input');
+    dobInput.className = 'pathir-form-input';
+    dobInput.type = 'text';
+    dobInput.placeholder = 'DD/MM/YYYY';
+    dobInput.setAttribute('autocomplete', 'bday');
+    dobField.appendChild(dobInput);
+    form.appendChild(dobField);
+
+    /* Postcode field */
+    var pcField = el('div', 'pathir-form-field');
+    pcField.appendChild(el('label', 'pathir-form-label', 'Postcode'));
+    var pcInput = document.createElement('input');
+    pcInput.className = 'pathir-form-input';
+    pcInput.type = 'text';
+    pcInput.placeholder = 'e.g. SW1A 1AA';
+    pcInput.setAttribute('autocomplete', 'postal-code');
+    pcField.appendChild(pcInput);
+    form.appendChild(pcField);
+
+    /* Phone field — initially hidden, shown if ambiguous */
+    var phoneField = el('div', 'pathir-form-field');
+    phoneField.style.display = 'none';
+    phoneField.appendChild(el('label', 'pathir-form-label', 'Phone number (to confirm identity)'));
+    var phoneInput = document.createElement('input');
+    phoneInput.className = 'pathir-form-input';
+    phoneInput.type = 'tel';
+    phoneInput.placeholder = 'e.g. 07700 900000';
+    phoneInput.setAttribute('autocomplete', 'tel');
+    phoneField.appendChild(phoneInput);
+    form.appendChild(phoneField);
+
+    /* Error message area */
+    var errorEl = el('div', 'pathir-form-error');
+    form.appendChild(errorEl);
+
+    /* Submit button */
+    var submitBtn = el('button', 'pathir-form-submit', 'Continue');
+    form.appendChild(submitBtn);
+
+    /* Store references */
+    self._formEls = {
+      form: form,
+      nameInput: nameInput,
+      dobInput: dobInput,
+      pcInput: pcInput,
+      phoneField: phoneField,
+      phoneInput: phoneInput,
+      errorEl: errorEl,
+      submitBtn: submitBtn,
+    };
+
+    dom.messages.appendChild(form);
+    self._scrollToBottom();
+    nameInput.focus();
+
+    /* Handle submit */
+    submitBtn.addEventListener('click', function () { self._submitForm(); });
+
+    /* Enter key submits form */
+    var formInputs = [nameInput, dobInput, pcInput, phoneInput];
+    formInputs.forEach(function (inp) {
+      inp.addEventListener('keydown', function (e) {
+        if (e.key === 'Enter') { e.preventDefault(); self._submitForm(); }
+      });
+    });
+  };
+
+  /** Parse DD/MM/YYYY to ISO YYYY-MM-DD. Returns null if invalid. */
+  function parseDOB(raw) {
+    var cleaned = raw.replace(/[\/\-\.]/g, '/').trim();
+    var parts = cleaned.split('/');
+    if (parts.length !== 3) return null;
+    var day = parseInt(parts[0], 10);
+    var month = parseInt(parts[1], 10);
+    var year = parseInt(parts[2], 10);
+    if (isNaN(day) || isNaN(month) || isNaN(year)) return null;
+    if (year < 100) year += 1900;
+    if (month < 1 || month > 12 || day < 1 || day > 31) return null;
+    return year + '-' + String(month).padStart(2, '0') + '-' + String(day).padStart(2, '0');
+  }
+
+  /** Submit the identity form — POST to chat-token for matching. */
+  PathirChatWidget.prototype._submitForm = function () {
+    var self = this;
+    var f = self._formEls;
+
+    var name = f.nameInput.value.trim();
+    var dobRaw = f.dobInput.value.trim();
+    var postcode = f.pcInput.value.trim();
+    var phone = f.phoneInput.value.trim();
+
+    /* Validation */
+    if (!name) { f.errorEl.textContent = 'Please enter your name.'; return; }
+    var dob = parseDOB(dobRaw);
+    if (!dob) { f.errorEl.textContent = 'Please enter a valid date (DD/MM/YYYY).'; return; }
+    if (!postcode) { f.errorEl.textContent = 'Please enter your postcode.'; return; }
+
+    f.errorEl.textContent = '';
+    f.submitBtn.disabled = true;
+    f.submitBtn.textContent = 'Looking you up…';
+
+    /* Store visitor info */
+    self._visitorName = name;
+    self._visitorDob = dob;
+    self._visitorPostcode = postcode;
+    self._visitorPhone = phone;
+
+    /* POST to chat-token with identity fields */
+    var body = {
+      agent_id: CFG.agentId,
+      visitor_name: name,
+      visitor_dob: dob,
+      visitor_postcode: postcode,
+    };
+    if (phone) body.visitor_phone = phone;
+
+    fetch(CFG.tokenUrl, {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body),
+    })
+    .then(function (r) {
+      if (!r.ok) throw new Error('Token endpoint returned ' + r.status);
+      return r.json();
+    })
+    .then(function (data) {
+      if (data.ambiguous && !phone) {
+        /* Show phone field for disambiguation */
+        f.phoneField.style.display = '';
+        f.submitBtn.disabled = false;
+        f.submitBtn.textContent = 'Continue';
+        f.errorEl.textContent = 'We found multiple matches. Please add your phone number.';
+        f.phoneInput.focus();
+        return;
+      }
+
+      /* Success — store results and transition to stage 3 */
+      self._signedUrl = data.signed_url;
+      self._contactId = data.contact_id || null;
+      self._isReturningPatient = !!data.is_returning_patient;
+      self.client.practiceId = data.practice_id || null;
+
+      self._transitionToChat();
+    })
+    .catch(function (err) {
+      console.error('[Pathir Chat] Form submit error:', err);
+      f.errorEl.textContent = 'Something went wrong. Please try again.';
+      f.submitBtn.disabled = false;
+      f.submitBtn.textContent = 'Continue';
+    });
+  };
+
+  // ─── Stage 3: Chatting ───
+
+  /** Transition to the chat stage — connect and send pending message. */
+  PathirChatWidget.prototype._transitionToChat = function () {
+    var self = this;
+    var dom = self.dom;
+
+    self.stage = 'chatting';
+
+    /* Clear the form, show messages area */
+    dom.messages.innerHTML = '';
+
+    /* Restore input bar */
+    dom.inputBar.style.display = '';
+    dom.voiceBtn.style.display = '';
+    dom.textInput.placeholder = 'Type a message…';
+    dom.textInput.value = '';
+    dom.sendBtn.disabled = true;
+
+    /* Set dynamic variables for the agent */
+    self.client.dynamicVars = {
+      visitor_name: self._visitorName,
+      visitor_dob: self._visitorDob,
+      visitor_postcode: self._visitorPostcode,
+      contact_id: self._contactId || '',
+      is_returning_patient: self._isReturningPatient ? 'true' : 'false',
+    };
+
+    /* Connect using pre-fetched signed URL */
     self.isConnecting = true;
     self._setStatus('Connecting…');
 
-    self.client.connect(textOnly).then(function () {
+    self.client.connect(true, self._signedUrl).then(function () {
       self._setStatus('');
-      /* Show a local greeting if the agent hasn't sent its first message yet */
-      if (CFG.greeting && !self._hasGreeted) {
-        self._hasGreeted = true;
-        /* Wait briefly for the agent's first_message to arrive */
-        setTimeout(function () {
-          if (self.dom.messages.childElementCount === 0) {
-            self._addMessage(CFG.greeting, 'agent');
-          }
-        }, 2000);
+      dom.textInput.focus();
+
+      /* Auto-send the pending message from stage 1 */
+      if (self._pendingMessage) {
+        self._addMessage(self._pendingMessage, 'user');
+        self.client.sendText(self._pendingMessage);
+        self._showTyping();
+        self._pendingMessage = '';
       }
     }).catch(function (err) {
       self.isConnecting = false;
@@ -921,26 +1308,18 @@
     });
   };
 
-  /** Send the current text input value. */
+  /** Send the current text input value (stage 3 only). */
   PathirChatWidget.prototype._sendText = function () {
     var text = this.dom.textInput.value.trim();
     if (!text) return;
 
     /* Ensure we're connected */
     if (!this.client.connected) {
-      this._connect(true);
-      /* Queue the message to send once connected */
-      var self = this;
-      var interval = setInterval(function () {
-        if (self.client.connected) {
-          clearInterval(interval);
-          self.client.sendText(text);
-        }
-      }, 200);
-    } else {
-      this.client.sendText(text);
+      this._transitionToChat();
+      return;
     }
 
+    this.client.sendText(text);
     this._addMessage(text, 'user');
     this.dom.textInput.value = '';
     this.dom.sendBtn.disabled = true;
@@ -978,7 +1357,15 @@
 
       /* Connect in voice mode */
       if (!self.client.connected) {
-        self._connect(false);
+        self.isConnecting = true;
+        self._setStatus('Connecting…');
+        self.client.connect(false, self._signedUrl).then(function () {
+          self._setStatus('Listening…');
+        }).catch(function (err) {
+          self.isConnecting = false;
+          self._setStatus('Could not connect');
+          console.error('[Pathir Chat]', err);
+        });
       }
     }).catch(function (err) {
       console.error('[Pathir Chat] Microphone access denied:', err);
@@ -997,11 +1384,34 @@
 
   // ─── UI helpers ───
 
-  /** Append a message bubble and return the element. */
+  /**
+   * Append a message bubble with avatar (agent) and timestamp.
+   * Returns the text element (for streaming updates).
+   */
   PathirChatWidget.prototype._addMessage = function (text, sender) {
+    var row = el('div', 'pathir-msg-row pathir-msg-row-' + sender);
+
+    /* Avatar for agent messages */
+    if (sender === 'agent') {
+      var avatar = document.createElement('img');
+      avatar.className = 'pathir-avatar';
+      avatar.src = CFG.avatarUrl;
+      avatar.alt = '';
+      avatar.loading = 'lazy';
+      row.appendChild(avatar);
+    }
+
     var bubble = el('div', 'pathir-msg pathir-msg-' + sender, '');
     bubble.textContent = text; // textContent prevents XSS
-    this.dom.messages.appendChild(bubble);
+    row.appendChild(bubble);
+
+    this.dom.messages.appendChild(row);
+
+    /* Timestamp */
+    var ts = el('div', 'pathir-timestamp pathir-timestamp-' + sender);
+    ts.textContent = formatTime(new Date());
+    this.dom.messages.appendChild(ts);
+
     this._scrollToBottom();
     return bubble;
   };
@@ -1030,6 +1440,18 @@
   PathirChatWidget.prototype._scrollToBottom = function () {
     var m = this.dom.messages;
     requestAnimationFrame(function () { m.scrollTop = m.scrollHeight; });
+  };
+
+  /** Update or remove the unread badge on the bubble. */
+  PathirChatWidget.prototype._updateBadge = function () {
+    var existing = this.dom.bubble.querySelector('.pathir-unread');
+    if (existing) existing.remove();
+
+    if (this._unreadCount > 0 && !this.isOpen) {
+      var badge = el('span', 'pathir-unread');
+      badge.textContent = this._unreadCount > 9 ? '9+' : String(this._unreadCount);
+      this.dom.bubble.appendChild(badge);
+    }
   };
 
   // ═══════════════════════════════════════════════════════════════════
