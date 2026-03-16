@@ -195,11 +195,12 @@ export default function DiaryView({ enquiries, practice }) {
         if (!isSameDay(new Date(e.appointment_datetime), selectedDay)) return;
       } catch { return; }
 
-      // Skip if we already have a proper appointment for this patient + time
+      // Skip if we already have a proper appointment at the same time
+      // (matches by time alone — name may differ slightly between enquiry and contact)
       const dt = new Date(e.appointment_datetime);
       const legacyMin = dt.getHours() * 60 + dt.getMinutes();
       const isDuplicate = blocks.some(b =>
-        b.patientName === e.patient_name && Math.abs(b.startMin - legacyMin) < 15
+        b.type === 'confirmed' && Math.abs(b.startMin - legacyMin) < 15
       );
       if (isDuplicate) return;
 
