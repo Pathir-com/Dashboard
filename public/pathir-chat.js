@@ -48,7 +48,7 @@
     tokenUrl:  scriptEl.getAttribute('data-token-url')   || '',
     greeting:  scriptEl.getAttribute('data-greeting')    || '',
     position:  scriptEl.getAttribute('data-position')    || 'right', // 'left' | 'right'
-    avatarUrl: scriptEl.getAttribute('data-avatar-url')  || 'https://amxcposgqlmgapzoopze.supabase.co/storage/v1/object/public/widget/poppy-avatar.png',
+    avatarUrl: scriptEl.getAttribute('data-avatar-url')  || '',
     termsUrl:  scriptEl.getAttribute('data-terms-url')   || 'https://pathir.com/legal-pages/terms-conditions',
   };
 
@@ -1401,12 +1401,19 @@
 
     /* Avatar for agent messages */
     if (sender === 'agent') {
-      var avatar = document.createElement('img');
-      avatar.className = 'pathir-avatar';
-      avatar.src = CFG.avatarUrl;
-      avatar.alt = '';
-      avatar.loading = 'lazy';
-      row.appendChild(avatar);
+      if (CFG.avatarUrl) {
+        var avatar = document.createElement('img');
+        avatar.className = 'pathir-avatar';
+        avatar.src = CFG.avatarUrl;
+        avatar.alt = '';
+        avatar.loading = 'lazy';
+        row.appendChild(avatar);
+      } else {
+        var avatarDiv = el('div', 'pathir-avatar', '');
+        avatarDiv.style.cssText = 'background:' + CFG.accent + ';display:flex;align-items:center;justify-content:center;';
+        avatarDiv.innerHTML = '<svg viewBox="0 0 24 24" width="16" height="16" fill="none" stroke="#fff" stroke-width="2" stroke-linecap="round" stroke-linejoin="round"><path d="M20 21v-2a4 4 0 0 0-4-4H8a4 4 0 0 0-4 4v2"/><circle cx="12" cy="7" r="4"/></svg>';
+        row.appendChild(avatarDiv);
+      }
     }
 
     var bubble = el('div', 'pathir-msg pathir-msg-' + sender, '');
