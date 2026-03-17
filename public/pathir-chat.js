@@ -90,7 +90,10 @@
 
       /* ── Floating bubble ── */
       '.pathir-bubble {',
-      '  position: fixed; bottom: 24px; ' + side + ': 24px; z-index: 2147483646;',
+      '  position: fixed !important; bottom: 24px !important; ' + side + ': 24px !important;',
+      '  left: ' + (side === 'left' ? '24px' : 'auto') + ' !important;',
+      '  right: ' + (side === 'right' ? '24px' : 'auto') + ' !important;',
+      '  z-index: 2147483646 !important;',
       '  width: 56px; height: 56px; border-radius: 50%;',
       '  background: ' + accent + '; color: #fff;',
       '  border: none; cursor: pointer;',
@@ -113,8 +116,11 @@
 
       /* ── Chat window ── */
       '.pathir-window {',
-      '  position: fixed; bottom: 92px; ' + side + ': 24px; z-index: 2147483647;',
-      '  width: 380px; max-height: min(640px, calc(100vh - 120px));',
+      '  position: fixed !important; bottom: 92px !important; ' + side + ': 24px !important;',
+      '  left: ' + (side === 'left' ? '24px' : 'auto') + ' !important;',
+      '  right: ' + (side === 'right' ? '24px' : 'auto') + ' !important;',
+      '  z-index: 2147483647 !important;',
+      '  width: 380px; height: min(640px, calc(100vh - 120px));',
       '  border-radius: 24px; overflow: hidden;',
       '  background: #fff;',
       '  box-shadow: 0 8px 40px rgba(0,0,0,0.12), 0 2px 8px rgba(0,0,0,0.06);',
@@ -291,7 +297,7 @@
 
       /* ── Mobile responsive ── */
       '@media (max-width: 440px) {',
-      '  .pathir-window { width: calc(100vw - 16px); ' + side + ': 8px; bottom: 82px; border-radius: 20px; }',
+      '  .pathir-window { width: calc(100vw - 16px); height: calc(100vh - 100px); ' + side + ': 8px; bottom: 82px; border-radius: 20px; }',
       '  .pathir-bubble { bottom: 16px; ' + side + ': 16px; }',
       '}',
     ].join('\n');
@@ -889,6 +895,8 @@
     this._bindEvents();
     this._bindClient();
 
+    /* Append directly to <body> to escape any parent container with
+       transforms (e.g. Framer, Webflow) that break position:fixed. */
     document.body.appendChild(this.dom.root);
   };
 
