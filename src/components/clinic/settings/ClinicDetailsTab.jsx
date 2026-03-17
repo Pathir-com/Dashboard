@@ -68,8 +68,13 @@ export default function ClinicDetailsTab({ details, setDetails, hours, setHours,
                   <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   {details.phone}
                 </div>
-              ) : (
+              ) : details.phone ? (
                 <Input value={details.phone} onChange={e => setDetails({ ...details, phone: e.target.value })} placeholder="020 1234 5678" className="mt-1.5" />
+              ) : (
+                <div className="mt-1.5 flex h-9 w-full items-center rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 text-sm text-slate-400 gap-2">
+                  <Phone className="w-3.5 h-3.5 shrink-0" />
+                  No phone number connected yet
+                </div>
               )}
             </div>
             <div>
@@ -80,8 +85,13 @@ export default function ClinicDetailsTab({ details, setDetails, hours, setHours,
                   <Mail className="w-3.5 h-3.5 text-slate-400 shrink-0" />
                   {details.email}
                 </div>
-              ) : (
+              ) : details.email ? (
                 <Input value={details.email} onChange={e => setDetails({ ...details, email: e.target.value })} placeholder="hello@yourclinic.co.uk" className="mt-1.5" />
+              ) : (
+                <div className="mt-1.5 flex h-9 w-full items-center rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 text-sm text-slate-400 gap-2">
+                  <Mail className="w-3.5 h-3.5 shrink-0" />
+                  No email address connected yet
+                </div>
               )}
             </div>
           </div>
