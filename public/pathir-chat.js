@@ -1285,11 +1285,13 @@
     dom.textInput.value = '';
     dom.sendBtn.disabled = true;
 
-    /* Set dynamic variables for the agent */
+    /* Set dynamic variables for the agent — these are sent in the WebSocket init
+       and also available to the post-conversation webhook via metadata. */
     self.client.dynamicVars = {
       visitor_name: self._visitorName,
       visitor_dob: self._visitorDob,
       visitor_postcode: self._visitorPostcode,
+      visitor_phone: self._visitorPhone || '',
       contact_id: self._contactId || '',
       is_returning_patient: self._isReturningPatient ? 'true' : 'false',
     };
@@ -1302,10 +1304,18 @@
       self._setStatus('');
       dom.textInput.focus();
 
-      /* Auto-send the pending message from stage 1 */
+      /* Auto-send the pending message from stage 1, prefixed with identity context
+         so the agent knows who they're talking to without asking again. */
       if (self._pendingMessage) {
+        var context = '[Web chat visitor identified: '
+          + 'Name: ' + self._visitorName
+          + ', DOB: ' + self._visitorDob
+          + ', Postcode: ' + self._visitorPostcode
+          + (self._contactId ? ', Contact ID: ' + self._contactId : '')
+          + (self._isReturningPatient ? ' (returning patient)' : ' (new patient)')
+          + '] ';
         self._addMessage(self._pendingMessage, 'user');
-        self.client.sendText(self._pendingMessage);
+        self.client.sendText(context + self._pendingMessage);
         self._showTyping();
         self._pendingMessage = '';
       }
