@@ -48,7 +48,7 @@
     tokenUrl:  scriptEl.getAttribute('data-token-url')   || '',
     greeting:  scriptEl.getAttribute('data-greeting')    || '',
     position:  scriptEl.getAttribute('data-position')    || 'right', // 'left' | 'right'
-    avatarUrl: scriptEl.getAttribute('data-avatar-url')  || '',
+    avatarUrl: scriptEl.getAttribute('data-avatar-url')  || 'https://qtrypzzcjebvfcihiynt.supabase.co/storage/v1/object/public/base44-prod/public/69b04cb7a1570d9772c3e08f/b36761f8c_profilephoto.png',
     termsUrl:  scriptEl.getAttribute('data-terms-url')   || 'https://pathir.com/legal-pages/terms-conditions',
   };
 
