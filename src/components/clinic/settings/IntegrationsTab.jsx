@@ -70,8 +70,8 @@ export default function IntegrationsTab({
 
   /* ── Connected status ── */
   const isConnected = {
-    phone_enabled: hasNumber,
-    sms_enabled: hasNumber,
+    phone_enabled: hasNumber && integrations.phone_enabled,
+    sms_enabled: hasNumber && integrations.sms_enabled !== false,
     web_chat_enabled: !!practice?.elevenlabs_agent_id,
     email_enabled: !!integrations.email_enabled && !!integrations.email_verified,
     facebook_enabled: !!integrations.facebook_page_id,
@@ -248,10 +248,14 @@ export default function IntegrationsTab({
   async function handlePhoneDisconnect() {
     setIsTogglingPhone(true);
     try {
-      await togglePhoneAgent(practice.id, false);
-      setIntegrations({ ...integrations, phone_enabled: false });
+      const updated = { ...integrations, phone_enabled: false };
+      const { error } = await supabase.from('practices').update({ integrations: updated }).eq('id', practice?.id);
+      if (error) throw error;
+      setIntegrations(updated);
       toast.success('Phone agent disconnected');
       setExpanded(null);
+      // Update Twilio routing in the background (non-blocking)
+      togglePhoneAgent(practice.id, false).catch(err => console.error('Twilio routing update failed:', err));
     } catch (err) {
       console.error(err);
       toast.error('Failed to disconnect phone agent');
@@ -263,10 +267,14 @@ export default function IntegrationsTab({
   async function handlePhoneReconnect() {
     setIsTogglingPhone(true);
     try {
-      await togglePhoneAgent(practice.id, true);
-      setIntegrations({ ...integrations, phone_enabled: true });
+      const updated = { ...integrations, phone_enabled: true };
+      const { error } = await supabase.from('practices').update({ integrations: updated }).eq('id', practice?.id);
+      if (error) throw error;
+      setIntegrations(updated);
       toast.success('Phone agent reconnected');
       setExpanded(null);
+      // Update Twilio routing in the background (non-blocking)
+      togglePhoneAgent(practice.id, true).catch(err => console.error('Twilio routing update failed:', err));
     } catch (err) {
       console.error(err);
       toast.error('Failed to reconnect phone agent');
@@ -338,7 +346,7 @@ export default function IntegrationsTab({
                 <div className="space-y-1.5">
                   <Label className="text-xs text-slate-500">Your AI phone number</Label>
                   <div className="flex items-center gap-1.5">
-                    <Input readOnly value={twilioNumber} className="font-mono text-xs h-8 bg-slate-50 text-slate-700" />
+                    <Input readOnly value={twilioNumber} className={`font-mono text-xs h-8 bg-slate-50 ${integrations.phone_enabled ? 'text-slate-700' : 'text-slate-400'}`} />
                     <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => {
                       navigator.clipboard.writeText(twilioNumber);
                       setPhoneCopied(true);
