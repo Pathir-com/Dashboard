@@ -1,13 +1,11 @@
 /**
- * Purpose:  Disconnect (deactivate) a practice's phone agent. Kept for
- *           backwards compatibility — existing clients that call this
- *           endpoint get the same behaviour as twilio-toggle-number
- *           with enable=false. The Twilio number is NOT released;
- *           inbound calls are rerouted to the disconnected-voice message.
+ * Purpose:  Toggle a practice's phone agent on or off without releasing the
+ *           Twilio number. "Disconnect" reroutes inbound calls to a
+ *           disconnected-voice message; "reconnect" restores VAPI routing.
  *
  * Dependencies: Twilio API, Supabase (practices table)
- * Used by:      Legacy dashboard callers
- * Changes:      2026-03-18  Rewritten — no longer clears twilio_phone_number
+ * Used by:      Dashboard IntegrationsTab (phone_enabled toggle)
+ * Changes:      2026-03-18  Initial implementation — replaces twilio-release-number
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -17,6 +15,7 @@ const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID")!;
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const VAPI_WEBHOOK_URL = "https://api.vapi.ai/twilio/inbound_call";
 const DISCONNECTED_VOICE_URL = `${SUPABASE_URL}/functions/v1/twilio-disconnected-voice`;
 
 const twilioAuth = btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`);
@@ -71,14 +70,22 @@ Deno.serve(async (req) => {
       });
     }
 
-    const { practiceId } = await req.json();
+    // ── Parse body ──
+    const { practiceId, enable } = await req.json();
     if (!practiceId) {
       return new Response(JSON.stringify({ message: "practiceId required" }), {
         status: 400,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
     }
+    if (typeof enable !== "boolean") {
+      return new Response(JSON.stringify({ message: "enable (boolean) required" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
+    // ── Admin client ──
     const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     // ── Verify ownership ──
@@ -97,28 +104,38 @@ Deno.serve(async (req) => {
     }
 
     if (!practice.twilio_phone_number) {
-      return new Response(
-        JSON.stringify({ message: "No number assigned" }),
-        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-      );
+      return new Response(JSON.stringify({ message: "No phone number assigned to this practice" }), {
+        status: 400,
+        headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
-    // ── Find the Twilio number and reroute to disconnected message ──
+    // ── Look up the Twilio IncomingPhoneNumber by phone number ──
     const encoded = encodeURIComponent(practice.twilio_phone_number);
     const searchData = await twilioGet(`/IncomingPhoneNumbers.json?PhoneNumber=${encoded}`);
     const twilioNumbers = searchData.incoming_phone_numbers || [];
 
-    if (twilioNumbers.length > 0) {
-      await twilioPost(`/IncomingPhoneNumbers/${twilioNumbers[0].sid}.json`, {
-        VoiceUrl: DISCONNECTED_VOICE_URL,
-        VoiceMethod: "POST",
-      });
+    if (twilioNumbers.length === 0) {
+      return new Response(
+        JSON.stringify({ message: "Phone number not found in Twilio account" }),
+        { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+      );
     }
 
-    // ── Mark phone as disabled — number stays assigned ──
+    const twilioNumber = twilioNumbers[0];
+
+    // ── Update Twilio VoiceUrl ──
+    const newVoiceUrl = enable ? VAPI_WEBHOOK_URL : DISCONNECTED_VOICE_URL;
+
+    await twilioPost(`/IncomingPhoneNumbers/${twilioNumber.sid}.json`, {
+      VoiceUrl: newVoiceUrl,
+      VoiceMethod: "POST",
+    });
+
+    // ── Update integrations.phone_enabled in the database ──
     const updatedIntegrations = {
       ...(practice.integrations || {}),
-      phone_enabled: false,
+      phone_enabled: enable,
     };
 
     await adminClient
@@ -129,8 +146,8 @@ Deno.serve(async (req) => {
     return new Response(
       JSON.stringify({
         phoneNumber: practice.twilio_phone_number,
-        enabled: false,
-        message: `Phone agent disconnected for ${practice.twilio_phone_number}`,
+        enabled: enable,
+        message: enable ? "Phone agent reconnected" : "Phone agent disconnected",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } },
     );

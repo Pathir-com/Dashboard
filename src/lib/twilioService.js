@@ -1,3 +1,13 @@
+/**
+ * Twilio Service Client
+ *
+ * Purpose: Manages Twilio phone number assignment and agent toggling for practices.
+ * Dependencies: @/lib/supabase, Supabase Edge Functions (twilio-assign-number, twilio-toggle-number)
+ * Used by: Practice settings / phone configuration components
+ * Changes:
+ *   2026-03-18: Replaced releaseTwilioNumber with togglePhoneAgent for permanent number assignment
+ */
+
 import { supabase } from '@/lib/supabase';
 
 const API_BASE = `${import.meta.env.VITE_SUPABASE_URL}/functions/v1`;
@@ -23,22 +33,29 @@ export async function assignTwilioNumber(practiceId) {
   return res.json();
 }
 
-export async function releaseTwilioNumber(practiceId) {
+/**
+ * Toggle the phone agent on or off for a practice's assigned number.
+ *
+ * @param {string} practiceId - The practice to toggle
+ * @param {boolean} enable - Whether to enable (true) or disable (false) the agent
+ * @returns {Promise<object>} Response from the edge function
+ */
+export async function togglePhoneAgent(practiceId, enable) {
   const { data: { session } } = await supabase.auth.getSession();
   if (!session) throw new Error('Not authenticated');
 
-  const res = await fetch(`${API_BASE}/twilio-release-number`, {
+  const res = await fetch(`${API_BASE}/twilio-toggle-number`, {
     method: 'POST',
     headers: {
       'Authorization': `Bearer ${session.access_token}`,
       'Content-Type': 'application/json',
     },
-    body: JSON.stringify({ practiceId }),
+    body: JSON.stringify({ practiceId, enable }),
   });
 
   if (!res.ok) {
     const error = await res.json();
-    throw new Error(error.message || 'Failed to release number');
+    throw new Error(error.message || 'Failed to toggle phone agent');
   }
 
   return res.json();

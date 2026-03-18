@@ -145,6 +145,7 @@ export default function ClinicSettings({ practice, onUpdate }) {
             holidayHours={holidayHours} setHolidayHours={setHolidayHours}
             integrations={integrations}
             practiceType={practiceType} setPracticeType={setPracticeType}
+            practice={practice}
           />
         )}
           {activeTab === 'team' && (

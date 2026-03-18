@@ -1,31 +1,38 @@
 /**
  * Purpose:
  *   Settings tab for basic clinic information, opening hours, holiday closures,
- *   and PMS integration. Phone and email fields become read-only when their
- *   respective integrations are active (prevents accidental edits to connected numbers).
+ *   and PMS integration. The clinic phone (landline) is always editable. The AI
+ *   phone number (Twilio) is displayed read-only with a copy button when assigned.
+ *   Email becomes read-only when its integration is active.
  *
  * Dependencies:
  *   - @/components/ui (Input, Label, Switch)
  *   - ./HolidayHours (holiday closure sub-component)
+ *   - sonner (toast notifications)
  *
  * Used by:
  *   - src/components/clinic/ClinicSettings.jsx (activeTab === 'clinic')
  *
  * Changes:
+ *   2026-03-18: Display AI phone number (practice.twilio_phone_number) separately
+ *               from the clinic landline; clinic phone is now always editable.
  *   2026-03-11: Added read-only phone/email display when integration is enabled.
  *   2026-03-09: Initial creation.
  */
 
-import React from 'react';
+import React, { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
-import { Phone, Mail } from 'lucide-react';
+import { Phone, Mail, Copy, CheckCircle2 } from 'lucide-react';
+import { toast } from 'sonner';
 import HolidayHours from './HolidayHours';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-export default function ClinicDetailsTab({ details, setDetails, hours, setHours, holidayHours, setHolidayHours, integrations, practiceType, setPracticeType }) {
+export default function ClinicDetailsTab({ details, setDetails, hours, setHours, holidayHours, setHolidayHours, integrations, practiceType, setPracticeType, practice }) {
+  const [aiPhoneCopied, setAiPhoneCopied] = useState(false);
+
   const updateHour = (index, field, value) => {
     setHours(prev => prev.map((h, i) => i === index ? { ...h, [field]: value } : h));
   };
@@ -61,19 +68,38 @@ export default function ClinicDetailsTab({ details, setDetails, hours, setHours,
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
-              <Label className="text-slate-600">Phone Number</Label>
-              {/* Read-only when phone integration is active — prevents accidental edits to the Twilio-connected number */}
-              {integrations?.phone_enabled && details.phone ? (
-                <div className="mt-1.5 flex h-9 w-full items-center rounded-md border border-slate-100 bg-slate-50 px-3 text-sm text-slate-700 gap-2">
-                  <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
-                  {details.phone}
-                </div>
-              ) : details.phone ? (
-                <Input value={details.phone} onChange={e => setDetails({ ...details, phone: e.target.value })} placeholder="020 1234 5678" className="mt-1.5" />
-              ) : (
-                <div className="mt-1.5 flex h-9 w-full items-center rounded-md border border-dashed border-slate-200 bg-slate-50 px-3 text-sm text-slate-400 gap-2">
-                  <Phone className="w-3.5 h-3.5 shrink-0" />
-                  No phone number connected yet
+              <Label className="text-slate-600">Clinic Phone</Label>
+              <Input value={details.phone} onChange={e => setDetails({ ...details, phone: e.target.value })} placeholder="020 1234 5678" className="mt-1.5" />
+
+              {/* AI phone number — shown when a Twilio number is assigned */}
+              {practice?.twilio_phone_number && (
+                <div className="mt-3">
+                  <Label className="text-slate-500 text-xs">AI Phone Number</Label>
+                  <div className="mt-1 flex items-center gap-1.5">
+                    <div className="flex h-8 flex-1 items-center rounded-md border border-slate-100 bg-slate-50 px-3 text-xs font-mono text-slate-700 gap-2">
+                      <Phone className="w-3 h-3 text-slate-400 shrink-0" />
+                      {practice.twilio_phone_number}
+                      <span className={`ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                        integrations?.phone_enabled
+                          ? 'bg-emerald-50 text-emerald-600'
+                          : 'bg-amber-50 text-amber-600'
+                      }`}>
+                        {integrations?.phone_enabled ? 'Active' : 'Inactive'}
+                      </span>
+                    </div>
+                    <button
+                      type="button"
+                      onClick={() => {
+                        navigator.clipboard.writeText(practice.twilio_phone_number);
+                        setAiPhoneCopied(true);
+                        toast.success('AI phone number copied');
+                        setTimeout(() => setAiPhoneCopied(false), 2000);
+                      }}
+                      className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-100 bg-slate-50 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
+                    >
+                      {aiPhoneCopied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                    </button>
+                  </div>
                 </div>
               )}
             </div>

@@ -10,6 +10,7 @@ import {
 import { toast } from 'sonner';
 import { motion, AnimatePresence } from 'framer-motion';
 import { supabase } from '@/lib/supabase';
+import { togglePhoneAgent } from '@/lib/twilioService';
 
 /* ── Channel + integration card definitions ── */
 
@@ -46,6 +47,8 @@ export default function IntegrationsTab({
   const [expanded, setExpanded] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
+  const [isTogglingPhone, setIsTogglingPhone] = useState(false);
+  const [phoneCopied, setPhoneCopied] = useState(false);
 
   // Form state
   const [stripeKey, setStripeKey] = useState(integrations.stripe_publishable_key || '');
@@ -95,9 +98,8 @@ export default function IntegrationsTab({
       return;
     }
     if (key === 'phone_enabled') {
-      const newVal = !integrations.phone_enabled;
-      if (newVal && !hasNumber) await onAssignNumber();
-      setIntegrations({ ...integrations, phone_enabled: newVal });
+      if (!hasNumber) { await onAssignNumber(); return; }
+      openPanel('phone_enabled');
       return;
     }
     setIntegrations({ ...integrations, [key]: !integrations[key] });
@@ -242,6 +244,37 @@ export default function IntegrationsTab({
     } catch (err) { console.error(err); toast.error('Failed to disconnect — please try again'); }
   }
 
+  /* ── Phone agent toggle handlers ── */
+  async function handlePhoneDisconnect() {
+    setIsTogglingPhone(true);
+    try {
+      await togglePhoneAgent(practice.id, false);
+      setIntegrations({ ...integrations, phone_enabled: false });
+      toast.success('Phone agent disconnected');
+      setExpanded(null);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to disconnect phone agent');
+    } finally {
+      setIsTogglingPhone(false);
+    }
+  }
+
+  async function handlePhoneReconnect() {
+    setIsTogglingPhone(true);
+    try {
+      await togglePhoneAgent(practice.id, true);
+      setIntegrations({ ...integrations, phone_enabled: true });
+      toast.success('Phone agent reconnected');
+      setExpanded(null);
+    } catch (err) {
+      console.error(err);
+      toast.error('Failed to reconnect phone agent');
+    } finally {
+      setIsTogglingPhone(false);
+    }
+  }
+
   /* ── Status dot colour ── */
   function dotColor(key) {
     if (isConnected[key]) return 'bg-emerald-400';
@@ -289,6 +322,56 @@ export default function IntegrationsTab({
             <button onClick={() => setExpanded(null)} className="absolute top-3 right-3 p-1 rounded text-slate-400 hover:text-slate-600 hover:bg-slate-50">
               <X className="w-4 h-4" />
             </button>
+
+            {/* ── Phone Agent ── */}
+            {expanded === 'phone_enabled' && twilioNumber && (
+              <div className="space-y-3 max-w-sm">
+                <div className="flex items-center gap-2 mb-2">
+                  <p className="text-sm font-semibold text-slate-900">Phone Agent</p>
+                  {integrations.phone_enabled
+                    ? <Badge variant="outline" className="text-emerald-600 border-emerald-200 bg-emerald-50">Connected</Badge>
+                    : <Badge variant="outline" className="text-amber-600 border-amber-200 bg-amber-50">Disconnected</Badge>
+                  }
+                </div>
+
+                {/* Assigned number with copy button */}
+                <div className="space-y-1.5">
+                  <Label className="text-xs text-slate-500">Your AI phone number</Label>
+                  <div className="flex items-center gap-1.5">
+                    <Input readOnly value={twilioNumber} className="font-mono text-xs h-8 bg-slate-50 text-slate-700" />
+                    <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => {
+                      navigator.clipboard.writeText(twilioNumber);
+                      setPhoneCopied(true);
+                      toast.success('Phone number copied');
+                      setTimeout(() => setPhoneCopied(false), 2000);
+                    }}>
+                      {phoneCopied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                    </Button>
+                  </div>
+                </div>
+
+                {!integrations.phone_enabled && (
+                  <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 text-xs text-amber-700">
+                    <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                    <span>Callers will hear a message that the automated receptionist is unavailable.</span>
+                  </div>
+                )}
+
+                <div className="flex items-center gap-2 pt-1">
+                  {integrations.phone_enabled ? (
+                    <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50"
+                      disabled={isTogglingPhone} onClick={handlePhoneDisconnect}>
+                      {isTogglingPhone ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" /> Disconnecting</> : 'Disconnect'}
+                    </Button>
+                  ) : (
+                    <Button size="sm" className="h-7 text-xs bg-blue-600 hover:bg-blue-700 text-white"
+                      disabled={isTogglingPhone} onClick={handlePhoneReconnect}>
+                      {isTogglingPhone ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" /> Reconnecting</> : 'Reconnect'}
+                    </Button>
+                  )}
+                </div>
+              </div>
+            )}
 
             {/* ── Web Chat embed ── */}
             {expanded === 'web_chat_enabled' && practice?.elevenlabs_agent_id && (() => {
@@ -475,7 +558,7 @@ export default function IntegrationsTab({
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {CHANNELS.map(ch => renderCard(ch, handleChannelClick))}
         </div>
-        {['email_enabled', 'web_chat_enabled'].includes(expanded) && renderPanel()}
+        {['phone_enabled', 'email_enabled', 'web_chat_enabled'].includes(expanded) && renderPanel()}
       </section>
 
       {/* Payments & Services */}
