@@ -21,6 +21,8 @@ import { getUKDateTime } from "../_shared/clock.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID") || "";
+const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN") || "";
 
 /** Normalize a UK phone number to E.164 format (+44...) */
 function normalizePhone(raw: string): string {
@@ -649,6 +651,72 @@ function ordinal(n: number): string {
   return n + (s[(v - 20) % 10] || s[v] || s[0]);
 }
 
+// ---------------------------------------------------------------------------
+// SMS — send booking confirmation via Twilio (best-effort, non-blocking)
+// ---------------------------------------------------------------------------
+
+async function sendConfirmationSms(
+  // deno-lint-ignore no-explicit-any
+  db: any,
+  opts: { practiceId: string; contactPhone: string; practiceName: string; serviceName: string; date: string; time: string; practitionerName?: string },
+) {
+  if (!TWILIO_SID || !TWILIO_TOKEN || !opts.contactPhone) return;
+
+  try {
+    // Look up practice SMS config
+    const { data: practice } = await db
+      .from("practices")
+      .select("messaging_service_sid, twilio_sms_number, integrations")
+      .eq("id", opts.practiceId)
+      .single();
+
+    if (!practice) return;
+    if (practice.integrations?.sms_enabled === false) return;
+
+    const from = practice.messaging_service_sid || practice.twilio_sms_number;
+    if (!from) return;
+
+    // Format date nicely
+    const d = new Date(opts.date + "T12:00:00Z");
+    const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
+    const months = ["Jan", "Feb", "Mar", "Apr", "May", "Jun", "Jul", "Aug", "Sep", "Oct", "Nov", "Dec"];
+    const dateStr = `${days[d.getUTCDay()]} ${d.getUTCDate()} ${months[d.getUTCMonth()]}`;
+
+    let body = `Your appointment at ${opts.practiceName} is confirmed:\n\n`;
+    body += `${opts.serviceName}\n`;
+    body += `${dateStr} at ${opts.time}`;
+    if (opts.practitionerName) body += ` with ${opts.practitionerName}`;
+    body += `\n\nIf you need to change or cancel, please call us. We look forward to seeing you!`;
+
+    const params: Record<string, string> = { To: opts.contactPhone, Body: body };
+    if (practice.messaging_service_sid) {
+      params.MessagingServiceSid = practice.messaging_service_sid;
+    } else {
+      params.From = practice.twilio_sms_number;
+    }
+
+    const res = await fetch(
+      `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`,
+      {
+        method: "POST",
+        headers: {
+          Authorization: `Basic ${btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`)}`,
+          "Content-Type": "application/x-www-form-urlencoded",
+        },
+        body: new URLSearchParams(params).toString(),
+      },
+    );
+    const result = await res.json();
+    if (res.ok) {
+      console.log(`[CONFIRM SMS] Sent to ${opts.contactPhone} | SID: ${result.sid}`);
+    } else {
+      console.error(`[CONFIRM SMS] Failed:`, result.message || result);
+    }
+  } catch (err) {
+    console.error("[CONFIRM SMS] Error (non-fatal):", err);
+  }
+}
+
 // deno-lint-ignore no-explicit-any
 async function handleRequestAppointment(db: any, args: any) {
   const { practice_id, contact_id, service_id, chosen_slot, is_urgent = false, notes, enquiry_id } = args;
@@ -761,6 +829,31 @@ async function handleRequestAppointment(db: any, args: any) {
     await db.from("conversations").update({
       outcome: "booking_made",
     }).eq("enquiry_id", enquiry_id);
+  }
+
+  /* Send confirmation SMS (best-effort, non-blocking) */
+  if (hasSlot && contact_id) {
+    // Look up contact phone + practice name for the SMS
+    const { data: contactForSms } = await db.from("contacts").select("phone").eq("id", contact_id).single();
+    const { data: practiceForSms } = await db.from("practices").select("name").eq("id", practice_id).single();
+
+    let serviceName = "Appointment";
+    if (service_id) {
+      const { data: svc } = await db.from("services").select("name").eq("id", service_id).single();
+      if (svc) serviceName = svc.name;
+    }
+
+    if (contactForSms?.phone && practiceForSms?.name) {
+      sendConfirmationSms(db, {
+        practiceId: practice_id,
+        contactPhone: contactForSms.phone,
+        practiceName: practiceForSms.name,
+        serviceName,
+        date: slot.date,
+        time: slot.start_time,
+        practitionerName: slot.practitioner_name || null,
+      }).catch(() => {}); // fire-and-forget
+    }
   }
 
   let message;

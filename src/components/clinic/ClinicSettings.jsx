@@ -65,6 +65,7 @@ export default function ClinicSettings({ practice, onUpdate }) {
   const [usps, setUsps] = useState(practice.usps || '');
   const [practicePlan, setPracticePlan] = useState({ offered: false, terms: '', ...practice.practice_plan });
   const [financeDocUrl, setFinanceDocUrl] = useState(practice.finance_document_url || '');
+  const [clinicGuidelines, setClinicGuidelines] = useState(practice.clinic_guidelines || '');
 
   const isFirstRender = useRef(true);
   const [savedAt, setSavedAt] = useState(null);
@@ -100,10 +101,11 @@ export default function ClinicSettings({ practice, onUpdate }) {
         usps,
         practice_plan: practicePlan,
         finance_document_url: financeDocUrl,
+        clinic_guidelines: clinicGuidelines,
       });
     }, 1000);
     return () => clearTimeout(timer);
-  }, [details, practiceType, hours, holidayHours, integrations, pearDental, practitioners, priceList, usps, practicePlan, financeDocUrl]);
+  }, [details, practiceType, hours, holidayHours, integrations, pearDental, practitioners, priceList, usps, practicePlan, financeDocUrl, clinicGuidelines]);
 
   return (
     <div className="flex h-screen overflow-hidden bg-slate-50">
@@ -159,6 +161,7 @@ export default function ClinicSettings({ practice, onUpdate }) {
               usps={usps} setUsps={setUsps}
               practicePlan={practicePlan} setPracticePlan={setPracticePlan}
               financeDocUrl={financeDocUrl} setFinanceDocUrl={setFinanceDocUrl}
+              clinicGuidelines={clinicGuidelines} setClinicGuidelines={setClinicGuidelines}
             />
           )}
           {activeTab === 'integrations' && (

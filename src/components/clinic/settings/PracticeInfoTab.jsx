@@ -5,7 +5,7 @@ import { base44 } from '@/api/base44Client';
 import { Upload, FileText, X, Loader2 } from 'lucide-react';
 import { toast } from 'sonner';
 
-export default function PracticeInfoTab({ usps, setUsps, practicePlan, setPracticePlan, financeDocUrl, setFinanceDocUrl }) {
+export default function PracticeInfoTab({ usps, setUsps, practicePlan, setPracticePlan, financeDocUrl, setFinanceDocUrl, clinicGuidelines, setClinicGuidelines }) {
   const fileRef = useRef();
   const [uploading, setUploading] = React.useState(false);
 
@@ -63,6 +63,21 @@ export default function PracticeInfoTab({ usps, setUsps, practicePlan, setPracti
               />
             </div>
           )}
+        </div>
+      </section>
+
+      {/* Clinic Guidelines */}
+      <section>
+        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Clinic Guidelines</h2>
+        <div className="bg-white rounded-xl border border-slate-100 p-6">
+          <Label className="text-slate-600 text-sm">Policies and rules for the AI to follow</Label>
+          <p className="text-xs text-slate-400 mb-3 mt-0.5">The AI will reference these when handling calls, chats, and messages.</p>
+          <textarea
+            value={clinicGuidelines}
+            onChange={e => setClinicGuidelines(e.target.value)}
+            placeholder={`e.g.\n• £50 deposit required for cosmetic appointments\n• 24-hour cancellation policy — missed appointments charged at £25\n• NHS patients seen Monday–Wednesday only\n• Emergency slots held daily 8:30–9:00am\n• Children under 5 seen by Dr Patel only`}
+            className="w-full h-36 rounded-md border border-input bg-transparent px-3 py-2 text-sm shadow-sm resize-none focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring placeholder:text-muted-foreground"
+          />
         </div>
       </section>
 
