@@ -229,71 +229,43 @@ Deno.serve(async (req) => {
       .update({ twilio_phone_number: phoneNumber })
       .eq("id", practiceId);
 
-    // ── Auto-provision SMS (best-effort, non-blocking) ──
-    let smsNumber: string | null = null;
+    // ── Auto-provision SMS Phase 1: Messaging Service + alpha sender ──
+    // No mobile number needed — outbound SMS works with alpha sender only.
+    // Phase 2 (mobile number for two-way SMS) requires Twilio regulatory bundle.
     let messagingServiceSid: string | null = null;
+    let alphaSender: string | null = null;
     try {
-      // Buy a UK mobile number for SMS
-      const mobileAvail = await twilioGet(
-        "/AvailablePhoneNumbers/GB/Mobile.json?SmsEnabled=true&VoiceEnabled=true&PageSize=3",
-      );
-      const mobileNums = mobileAvail.available_phone_numbers || [];
+      const svc = await twilioPostUrl("https://messaging.twilio.com/v1/Services", {
+        FriendlyName: `Pathir - ${practice.name}`,
+        InboundRequestUrl: SMS_WEBHOOK_URL,
+        InboundMethod: "POST",
+        StickySender: "true",
+      });
 
-      if (mobileNums.length > 0) {
-        const mobilePurchased = await twilioPost("/IncomingPhoneNumbers.json", {
-          PhoneNumber: mobileNums[0].phone_number,
-          SmsUrl: SMS_WEBHOOK_URL,
-          SmsMethod: "POST",
-          FriendlyName: `Pathir SMS - ${practice.name}`,
-        });
+      if (svc.sid) {
+        messagingServiceSid = svc.sid;
+        alphaSender = toAlphaSender(practice.name);
 
-        if (mobilePurchased.sid) {
-          smsNumber = mobilePurchased.phone_number;
+        // Add alpha sender (practice name shows on patient's phone)
+        await twilioPostUrl(
+          `https://messaging.twilio.com/v1/Services/${svc.sid}/AlphaSenders`,
+          { AlphaSender: alphaSender },
+        );
 
-          // Create Messaging Service
-          const svc = await twilioPostUrl("https://messaging.twilio.com/v1/Services", {
-            FriendlyName: `Pathir - ${practice.name}`,
-            InboundRequestUrl: SMS_WEBHOOK_URL,
-            InboundMethod: "POST",
-            StickySender: "true",
-          });
-
-          if (svc.sid) {
-            messagingServiceSid = svc.sid;
-
-            // Add alpha sender (practice name)
-            await twilioPostUrl(
-              `https://messaging.twilio.com/v1/Services/${svc.sid}/AlphaSenders`,
-              { AlphaSender: toAlphaSender(practice.name) },
-            );
-
-            // Add mobile number to sender pool
-            await twilioPostUrl(
-              `https://messaging.twilio.com/v1/Services/${svc.sid}/PhoneNumbers`,
-              { PhoneNumberSid: mobilePurchased.sid },
-            );
-          }
-
-          // Save SMS fields
-          await adminClient
-            .from("practices")
-            .update({
-              twilio_sms_number: smsNumber,
-              messaging_service_sid: messagingServiceSid,
-            })
-            .eq("id", practiceId);
-        }
+        await adminClient
+          .from("practices")
+          .update({ messaging_service_sid: messagingServiceSid })
+          .eq("id", practiceId);
       }
     } catch (smsErr) {
-      // SMS provisioning is best-effort — voice number is already assigned
       console.error("[ASSIGN] SMS provisioning failed (non-fatal):", smsErr);
     }
 
     return new Response(
       JSON.stringify({
         phoneNumber,
-        smsNumber,
         messagingServiceSid,
+        alphaSender,
         message: "Number assigned successfully",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
