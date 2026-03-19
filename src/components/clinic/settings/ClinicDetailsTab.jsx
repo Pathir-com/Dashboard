@@ -1,8 +1,8 @@
 /**
  * Purpose:
  *   Settings tab for basic clinic information, opening hours, holiday closures,
- *   and PMS integration. The clinic phone (landline) is always editable. The AI
- *   phone number (Twilio) is displayed read-only with a copy button when assigned.
+ *   and PMS integration. When a Twilio number is assigned, it becomes the clinic
+ *   phone number (read-only). Otherwise the phone field is editable.
  *   Email becomes read-only when its integration is active.
  *
  * Dependencies:
@@ -14,6 +14,8 @@
  *   - src/components/clinic/ClinicSettings.jsx (activeTab === 'clinic')
  *
  * Changes:
+ *   2026-03-19: Merge AI phone into clinic phone — single field, read-only when
+ *               Twilio number is assigned.
  *   2026-03-18: Display AI phone number (practice.twilio_phone_number) separately
  *               from the clinic landline; clinic phone is now always editable.
  *   2026-03-11: Added read-only phone/email display when integration is enabled.
@@ -69,38 +71,34 @@ export default function ClinicDetailsTab({ details, setDetails, hours, setHours,
           <div className="grid grid-cols-2 gap-4">
             <div>
               <Label className="text-slate-600">Clinic Phone</Label>
-              <Input value={details.phone} onChange={e => setDetails({ ...details, phone: e.target.value })} placeholder="020 1234 5678" className="mt-1.5" />
-
-              {/* AI phone number — shown when a Twilio number is assigned */}
-              {practice?.twilio_phone_number && (
-                <div className="mt-3">
-                  <Label className="text-slate-500 text-xs">AI Phone Number</Label>
-                  <div className="mt-1 flex items-center gap-1.5">
-                    <div className="flex h-8 flex-1 items-center rounded-md border border-slate-100 bg-slate-50 px-3 text-xs font-mono text-slate-700 gap-2">
-                      <Phone className="w-3 h-3 text-slate-400 shrink-0" />
-                      {practice.twilio_phone_number}
-                      <span className={`ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
-                        integrations?.phone_enabled
-                          ? 'bg-emerald-50 text-emerald-600'
-                          : 'bg-amber-50 text-amber-600'
-                      }`}>
-                        {integrations?.phone_enabled ? 'Active' : 'Inactive'}
-                      </span>
-                    </div>
-                    <button
-                      type="button"
-                      onClick={() => {
-                        navigator.clipboard.writeText(practice.twilio_phone_number);
-                        setAiPhoneCopied(true);
-                        toast.success('AI phone number copied');
-                        setTimeout(() => setAiPhoneCopied(false), 2000);
-                      }}
-                      className="flex h-8 w-8 items-center justify-center rounded-md border border-slate-100 bg-slate-50 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors"
-                    >
-                      {aiPhoneCopied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
-                    </button>
+              {practice?.twilio_phone_number ? (
+                <div className="mt-1.5 flex items-center gap-1.5">
+                  <div className="flex h-9 flex-1 items-center rounded-md border border-slate-100 bg-slate-50 px-3 text-sm font-mono text-slate-700 gap-2">
+                    <Phone className="w-3.5 h-3.5 text-slate-400 shrink-0" />
+                    {practice.twilio_phone_number}
+                    <span className={`ml-auto text-[10px] font-medium px-1.5 py-0.5 rounded-full ${
+                      integrations?.phone_enabled
+                        ? 'bg-emerald-50 text-emerald-600'
+                        : 'bg-amber-50 text-amber-600'
+                    }`}>
+                      {integrations?.phone_enabled ? 'Active' : 'Inactive'}
+                    </span>
                   </div>
+                  <button
+                    type="button"
+                    onClick={() => {
+                      navigator.clipboard.writeText(practice.twilio_phone_number);
+                      setAiPhoneCopied(true);
+                      toast.success('Phone number copied');
+                      setTimeout(() => setAiPhoneCopied(false), 2000);
+                    }}
+                    className="flex h-9 w-9 items-center justify-center rounded-md border border-slate-100 bg-slate-50 text-slate-400 hover:text-slate-600 hover:bg-slate-100 transition-colors shrink-0"
+                  >
+                    {aiPhoneCopied ? <CheckCircle2 className="w-3.5 h-3.5 text-emerald-500" /> : <Copy className="w-3.5 h-3.5" />}
+                  </button>
                 </div>
+              ) : (
+                <Input value={details.phone} onChange={e => setDetails({ ...details, phone: e.target.value })} placeholder="020 1234 5678" className="mt-1.5" />
               )}
             </div>
             <div>
