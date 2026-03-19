@@ -19,7 +19,6 @@ import ClinicSidebar from '../components/clinic/ClinicSidebar';
 import ClinicSettings from '../components/clinic/ClinicSettings';
 import DiaryView from '../components/clinic/DiaryView';
 import EmailFollowUp from '../components/clinic/EmailFollowUp';
-import ChatView from '../components/clinic/ChatView';
 
 export default function Clinic() {
   const [currentView, setCurrentView] = useState('enquiries');
@@ -268,8 +267,6 @@ export default function Clinic() {
           />
         ) : currentView === 'diary' ? (
           <DiaryView enquiries={enquiries} practice={selectedPractice} />
-        ) : currentView === 'chat' ? (
-          <ChatView practice={selectedPractice} />
         ) : (
           <div className="max-w-3xl mx-auto px-4 py-12">
             {currentUser?.role === 'admin' && (
@@ -385,11 +382,11 @@ export default function Clinic() {
                         text-sm leading-relaxed mb-3
                         ${enquiry.is_completed ? 'text-slate-400' : 'text-slate-600'}
                       `}>
-                        {expandedId === enquiry.id ? enquiry.message : (
-                          enquiry.message.length > 80 
-                            ? enquiry.message.substring(0, 80) + '...' 
-                            : enquiry.message
-                        )}
+                        {(() => {
+                          const displayText = enquiry.conversation_summary || enquiry.message;
+                          if (expandedId === enquiry.id) return displayText;
+                          return displayText.length > 80 ? displayText.substring(0, 80) + '...' : displayText;
+                        })()}
                       </p>
 
                       {expandedId === enquiry.id && (
@@ -410,40 +407,60 @@ export default function Clinic() {
                                 </div>
                               </AccordionTrigger>
                               <AccordionContent className="bg-slate-50 rounded-lg p-4 max-h-96 overflow-y-auto mt-1">
-                                {enquiry.conversation && enquiry.conversation.length > 0 ? (
-                                  <div className="space-y-3">
-                                    {enquiry.conversation.map((msg, idx) => (
-                                      <div
-                                        key={idx}
-                                        className={`flex ${msg.role === 'patient' ? 'justify-end' : 'justify-start'}`}
-                                      >
-                                        <div className={`
-                                          max-w-[80%] rounded-2xl px-4 py-2.5
-                                          ${msg.role === 'patient' 
-                                            ? 'bg-blue-600 text-white' 
-                                            : 'bg-white text-slate-700 border border-slate-200'
-                                          }
-                                        `}>
-                                          <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                                            {msg.message}
-                                          </p>
-                                          {msg.timestamp && (
-                                            <p className={`
-                                              text-xs mt-1
-                                              ${msg.role === 'patient' ? 'text-blue-100' : 'text-slate-400'}
+                                {(() => {
+                                  // Prefer inline conversation array, fall back to joined transcript
+                                  let messages = enquiry.conversation;
+                                  if ((!messages || messages.length === 0) && enquiry.conversation_transcript) {
+                                    const raw = enquiry.conversation_transcript;
+                                    const arr = Array.isArray(raw) ? raw : (() => {
+                                      try { return typeof raw === 'string' && raw.trim().startsWith('[') ? JSON.parse(raw) : null; } catch { return null; }
+                                    })();
+                                    if (Array.isArray(arr)) {
+                                      messages = arr.map(m => ({
+                                        role: /^(user|patient|human|customer)$/i.test(m.role || m.sender || '') ? 'patient' : 'agent',
+                                        message: m.text || m.message || m.content || '',
+                                        timestamp: m.timestamp || m.time || null,
+                                      }));
+                                    }
+                                  }
+                                  if (messages && messages.length > 0) {
+                                    return (
+                                      <div className="space-y-3">
+                                        {messages.map((msg, idx) => (
+                                          <div
+                                            key={idx}
+                                            className={`flex ${msg.role === 'patient' || msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
+                                          >
+                                            <div className={`
+                                              max-w-[80%] rounded-2xl px-4 py-2.5
+                                              ${msg.role === 'patient' || msg.role === 'user'
+                                                ? 'bg-blue-600 text-white'
+                                                : 'bg-white text-slate-700 border border-slate-200'
+                                              }
                                             `}>
-                                              {format(new Date(msg.timestamp), 'h:mm a')}
-                                            </p>
-                                          )}
-                                        </div>
+                                              <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                                                {msg.message || msg.text || ''}
+                                              </p>
+                                              {msg.timestamp && (
+                                                <p className={`
+                                                  text-xs mt-1
+                                                  ${msg.role === 'patient' || msg.role === 'user' ? 'text-blue-100' : 'text-slate-400'}
+                                                `}>
+                                                  {format(new Date(msg.timestamp), 'h:mm a')}
+                                                </p>
+                                              )}
+                                            </div>
+                                          </div>
+                                        ))}
                                       </div>
-                                    ))}
-                                  </div>
-                                ) : (
-                                  <p className="text-sm text-slate-400 text-center py-4">
-                                    No conversation recorded
-                                  </p>
-                                )}
+                                    );
+                                  }
+                                  return (
+                                    <p className="text-sm text-slate-400 text-center py-4">
+                                      No conversation recorded
+                                    </p>
+                                  );
+                                })()}
                               </AccordionContent>
                             </AccordionItem>
 
@@ -477,7 +494,9 @@ export default function Clinic() {
                       <div className="flex items-center flex-wrap gap-x-3 gap-y-1 text-xs text-slate-400">
                         <span className="flex items-center gap-1.5">
                           {enquiry.source === 'phone' ? (
-                            <><Phone className="w-3.5 h-3.5" /> Phone</>
+                            <><Phone className="w-3.5 h-3.5" /> Call</>
+                          ) : enquiry.source === 'chat' ? (
+                            <><MessageCircle className="w-3.5 h-3.5" /> Web Chat</>
                           ) : enquiry.source === 'sms' ? (
                             <><MessageCircle className="w-3.5 h-3.5" /> SMS</>
                           ) : enquiry.source === 'email' ? (

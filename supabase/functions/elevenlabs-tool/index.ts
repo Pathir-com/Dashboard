@@ -258,7 +258,7 @@ async function handleLookupCallerPhone(db: any, args: any) {
   if (!twilio_number) return { success: false, message: "No practice number detected." };
 
   const { data: practice } = await db
-    .from("practices").select("id, name, email, opening_hours, holiday_hours, integrations")
+    .from("practices").select("id, name, email, phone, website, opening_hours, holiday_hours, integrations, practitioners, price_list, usps, practice_plan, clinic_guidelines, agent_tone")
     .eq("twilio_phone_number", twilio_number).single();
   if (!practice) return { success: false, message: "Practice not found." };
 
@@ -268,7 +268,24 @@ async function handleLookupCallerPhone(db: any, args: any) {
   const base = {
     success: true, practice_id: practice.id, practice_name: practice.name,
     practice_email: practice.email || integrations.email_from || null,
+    practice_phone: practice.phone,
+    practice_website: practice.website,
     practice_hours: practiceHours,
+    practice_usps: practice.usps || null,
+    practice_plan: practice.practice_plan?.offered ? practice.practice_plan.terms : null,
+    clinic_guidelines: practice.clinic_guidelines || null,
+    agent_tone: practice.agent_tone || null,
+    practitioners: (practice.practitioners || []).map((p: { title?: string; name: string; credentials?: string; bio?: string; services?: string[] }) => ({
+      name: `${p.title || ''} ${p.name}`.trim(),
+      credentials: p.credentials || null,
+      bio: p.bio || null,
+      services: p.services || [],
+    })),
+    prices: (practice.price_list || []).map((p: { service_name: string; price: number; notes?: string }) => ({
+      service: p.service_name,
+      price: `£${p.price}`,
+      notes: p.notes || null,
+    })),
     email_enabled: !!integrations.email_enabled,
     stripe_connected: !!integrations.stripe_connected,
     current_datetime: clock,
@@ -313,6 +330,23 @@ async function handleLookupCallerPhone(db: any, args: any) {
     contactId: contact?.id, phone: normalised, practiceId: practice.id,
   });
 
+  // Look up last practitioner for returning patients
+  let lastPractitioner = null;
+  if (contact) {
+    const { data: lastAppt } = await db
+      .from("appointments")
+      .select("practitioners(name)")
+      .eq("contact_id", contact.id)
+      .eq("practice_id", practice.id)
+      .neq("status", "cancelled")
+      .order("starts_at", { ascending: false })
+      .limit(1)
+      .single();
+    if (lastAppt?.practitioners?.name) {
+      lastPractitioner = lastAppt.practitioners.name;
+    }
+  }
+
   if (contact) {
     return {
       ...base, found: true, contact_id: contact.id, contact_name: contact.name,
@@ -321,7 +355,9 @@ async function handleLookupCallerPhone(db: any, args: any) {
       contact_postcode: contact.postcode, enquiry_id: enquiryId,
       conversation_db_id: conv?.id || null,
       conversation_history: history,
+      last_practitioner: lastPractitioner,
       message: `Account found for this phone number. Patient name on file: ${contact.name}.`
+        + (lastPractitioner ? ` Last seen by ${lastPractitioner}.` : "")
         + (history ? `\n\n${history}` : ""),
     };
   }
@@ -432,7 +468,7 @@ async function handleSearchAvailability(db: any, args: any) {
 
   // Find matching service
   const { data: services } = await db
-    .from("services").select("id, name, duration_minutes, buffer_minutes")
+    .from("services").select("id, name, duration_minutes, buffer_minutes, price_pence, notes")
     .eq("practice_id", practice_id).ilike("name", `%${service_name}%`).limit(1);
 
   if (!services || services.length === 0) {
@@ -449,11 +485,11 @@ async function handleSearchAvailability(db: any, args: any) {
 
   let practitioners;
   if (practitionerIds.length > 0) {
-    const { data } = await db.from("practitioners").select("id, name, working_hours").in("id", practitionerIds);
+    const { data } = await db.from("practitioners").select("id, name, working_hours, bio, credentials").in("id", practitionerIds);
     practitioners = data || [];
   } else {
     // Fallback: all practitioners at the practice
-    const { data } = await db.from("practitioners").select("id, name, working_hours").eq("practice_id", practice_id);
+    const { data } = await db.from("practitioners").select("id, name, working_hours, bio, credentials").eq("practice_id", practice_id);
     practitioners = data || [];
   }
 
@@ -493,6 +529,9 @@ async function handleSearchAvailability(db: any, args: any) {
     slots: slots.slice(0, 6),
     service_id: service.id,
     service_name: service.name,
+    service_price: service.price_pence ? `£${(service.price_pence / 100).toFixed(2)}` : null,
+    service_notes: service.notes || null,
+    service_duration: `${service.duration_minutes || 30} minutes`,
     practice_hours: hoursStatus,
     current_datetime: searchClock,
     message: slots.length === 0 ? "No available slots found for the requested criteria." : `Found ${slots.length} available slot(s).`,
@@ -577,6 +616,7 @@ async function findSlots(db: any, opts: any) {
         slots.push({
           practitioner_id: prac.id,
           practitioner_name: prac.name,
+          practitioner_bio: prac.bio || null,
           date: iso,
           day: dayName,
           start_time: startTime,
@@ -639,6 +679,7 @@ async function handleRequestAppointment(db: any, args: any) {
     chosen_slot: slot || null,
     preferred_date: slot?.date || null,
     preferred_time: slot?.start_time || null,
+    preferred_practitioner_id: slot?.practitioner_id || null,
     notes: requestNotes,
     submitted_outside_hours: outsideHours,
     source: "phone",
@@ -742,7 +783,7 @@ async function handleLookupWebVisitor(db: any, args: any) {
   if (!practice_id) return { success: false, message: "Missing practice ID." };
 
   const { data: practice } = await db
-    .from("practices").select("id, name, email, opening_hours, holiday_hours, integrations")
+    .from("practices").select("id, name, email, phone, website, opening_hours, holiday_hours, integrations, practitioners, price_list, usps, practice_plan, clinic_guidelines, agent_tone")
     .eq("id", practice_id).single();
   if (!practice) return { success: false, message: "Practice not found." };
 
@@ -752,7 +793,24 @@ async function handleLookupWebVisitor(db: any, args: any) {
   const base = {
     success: true, practice_id: practice.id, practice_name: practice.name,
     practice_email: practice.email || pIntegrations.email_from || null,
+    practice_phone: practice.phone,
+    practice_website: practice.website,
     practice_hours: practiceHours,
+    practice_usps: practice.usps || null,
+    practice_plan: practice.practice_plan?.offered ? practice.practice_plan.terms : null,
+    clinic_guidelines: practice.clinic_guidelines || null,
+    agent_tone: practice.agent_tone || null,
+    practitioners: (practice.practitioners || []).map((p: { title?: string; name: string; credentials?: string; bio?: string; services?: string[] }) => ({
+      name: `${p.title || ''} ${p.name}`.trim(),
+      credentials: p.credentials || null,
+      bio: p.bio || null,
+      services: p.services || [],
+    })),
+    prices: (practice.price_list || []).map((p: { service_name: string; price: number; notes?: string }) => ({
+      service: p.service_name,
+      price: `£${p.price}`,
+      notes: p.notes || null,
+    })),
     email_enabled: !!pIntegrations.email_enabled,
     stripe_connected: !!pIntegrations.stripe_connected,
     current_datetime: clock,

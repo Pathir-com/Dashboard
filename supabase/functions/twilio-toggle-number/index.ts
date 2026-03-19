@@ -1,7 +1,7 @@
 /**
  * Purpose:  Toggle a practice's phone agent on or off without releasing the
  *           Twilio number. "Disconnect" reroutes inbound calls to a
- *           disconnected-voice message; "reconnect" restores VAPI routing.
+ *           disconnected-voice message; "reconnect" restores ElevenLabs routing.
  *
  * Dependencies: Twilio API, Supabase (practices table)
  * Used by:      Dashboard IntegrationsTab (phone_enabled toggle)
@@ -15,7 +15,7 @@ const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID")!;
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const VAPI_WEBHOOK_URL = "https://api.vapi.ai/twilio/inbound_call";
+const ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/twilio/inbound_call";
 const DISCONNECTED_VOICE_URL = `${SUPABASE_URL}/functions/v1/twilio-disconnected-voice`;
 
 const twilioAuth = btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`);
@@ -112,10 +112,13 @@ Deno.serve(async (req) => {
 
     // ── Look up the Twilio IncomingPhoneNumber by phone number ──
     const encoded = encodeURIComponent(practice.twilio_phone_number);
+    console.error(`[TOGGLE] Looking up Twilio number: ${practice.twilio_phone_number}`);
     const searchData = await twilioGet(`/IncomingPhoneNumbers.json?PhoneNumber=${encoded}`);
     const twilioNumbers = searchData.incoming_phone_numbers || [];
+    console.error(`[TOGGLE] Twilio search returned ${twilioNumbers.length} numbers`);
 
     if (twilioNumbers.length === 0) {
+      console.error(`[TOGGLE] Number not found in Twilio. Raw response: ${JSON.stringify(searchData).slice(0, 500)}`);
       return new Response(
         JSON.stringify({ message: "Phone number not found in Twilio account" }),
         { status: 404, headers: { ...corsHeaders, "Content-Type": "application/json" } },
@@ -125,12 +128,14 @@ Deno.serve(async (req) => {
     const twilioNumber = twilioNumbers[0];
 
     // ── Update Twilio VoiceUrl ──
-    const newVoiceUrl = enable ? VAPI_WEBHOOK_URL : DISCONNECTED_VOICE_URL;
+    const newVoiceUrl = enable ? ELEVENLABS_VOICE_URL : DISCONNECTED_VOICE_URL;
+    console.error(`[TOGGLE] Updating VoiceUrl to: ${newVoiceUrl}`);
 
-    await twilioPost(`/IncomingPhoneNumbers/${twilioNumber.sid}.json`, {
+    const twilioUpdateResult = await twilioPost(`/IncomingPhoneNumbers/${twilioNumber.sid}.json`, {
       VoiceUrl: newVoiceUrl,
       VoiceMethod: "POST",
     });
+    console.error(`[TOGGLE] Twilio update result: ${JSON.stringify(twilioUpdateResult).slice(0, 300)}`);
 
     // ── Update integrations.phone_enabled in the database ──
     const updatedIntegrations = {

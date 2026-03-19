@@ -410,7 +410,13 @@ export async function deletePractice(id) {
 export async function listEnquiries(practiceId, sortField) {
   let query = supabase
     .from('enquiries')
-    .select('*')
+    .select(`
+      *,
+      conversation:conversations!enquiry_id (
+        id, summary, transcript, status, outcome, duration_seconds,
+        started_at, ended_at, channel
+      )
+    `)
     .eq('practice_id', practiceId);
 
   if (sortField) {
@@ -423,7 +429,16 @@ export async function listEnquiries(practiceId, sortField) {
 
   const { data, error } = await query;
   if (error) throw error;
-  return data;
+
+  // Flatten: conversation join returns array (one-to-many), pick the first
+  return (data || []).map(e => ({
+    ...e,
+    conversation_summary: e.conversation?.[0]?.summary || null,
+    conversation_transcript: e.conversation?.[0]?.transcript || null,
+    conversation_status: e.conversation?.[0]?.status || null,
+    conversation_outcome: e.conversation?.[0]?.outcome || null,
+    conversation_duration: e.conversation?.[0]?.duration_seconds || null,
+  }));
 }
 
 export async function createEnquiry(enquiryData) {

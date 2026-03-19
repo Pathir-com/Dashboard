@@ -44,7 +44,7 @@ Deno.serve(async (req) => {
     if (practiceId) {
       const { data } = await adminClient
         .from("practices")
-        .select("id, name, address, phone, email, website, practice_type, opening_hours, holiday_hours, practitioners, price_list, usps, practice_plan")
+        .select("id, name, address, phone, email, website, practice_type, opening_hours, holiday_hours, practitioners, price_list, usps, practice_plan, clinic_guidelines, agent_tone")
         .eq("id", practiceId)
         .single();
       practice = data;
@@ -52,7 +52,7 @@ Deno.serve(async (req) => {
     } else if (domain) {
       const { data } = await adminClient
         .from("practices")
-        .select("id, name, address, phone, email, website, practice_type, opening_hours, holiday_hours, practitioners, price_list, usps, practice_plan")
+        .select("id, name, address, phone, email, website, practice_type, opening_hours, holiday_hours, practitioners, price_list, usps, practice_plan, clinic_guidelines, agent_tone")
         .ilike("website", `%${domain}%`)
         .limit(1)
         .single();
@@ -82,7 +82,7 @@ Deno.serve(async (req) => {
         .join("\n"),
       team: (practice.practitioners || [])
         // deno-lint-ignore no-explicit-any
-        .map((p: any) => `${p.title || ""} ${p.name} — ${p.credentials || ""} (${(p.services || []).join(", ")})`)
+        .map((p: any) => `${p.title || ""} ${p.name} — ${p.credentials || ""}${p.bio ? ` | ${p.bio}` : ""} (${(p.services || []).join(", ")})`)
         .join("\n"),
       prices: (practice.price_list || [])
         // deno-lint-ignore no-explicit-any
@@ -92,6 +92,8 @@ Deno.serve(async (req) => {
       practice_plan: practice.practice_plan?.offered
         ? practice.practice_plan.terms
         : "No practice plan offered",
+      clinic_guidelines: practice.clinic_guidelines || null,
+      agent_tone: practice.agent_tone || null,
     };
 
     // 3. Look up contact history if phone or email provided

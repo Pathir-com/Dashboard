@@ -1046,13 +1046,13 @@
     dom.status.textContent = '';
 
     /* Show avatar + greeting as the first agent message */
-    var greetingText = CFG.greeting || 'Hi there! How can I help you today?';
+    var greetingText = CFG.greeting || 'Hi there \u{1F44B} I can help you book an appointment or answer any questions about treatments \u2014 just like our reception team. Type below to start!';
     self._addMessage(greetingText, 'agent');
 
     /* Show the text input bar (already in DOM) */
     dom.inputBar.style.display = '';
     dom.voiceBtn.style.display = 'none'; // hide voice in intro
-    dom.textInput.placeholder = 'Type a message…';
+    dom.textInput.placeholder = 'type here..';
     dom.textInput.value = '';
     dom.sendBtn.disabled = true;
     dom.textInput.focus();
@@ -1097,12 +1097,12 @@
     var form = el('div', 'pathir-form');
 
     var intro = el('div', 'pathir-form-intro');
-    intro.textContent = 'Before we start, could you share a few details so we can look up your records?';
+    intro.innerHTML = '<p style="font-size:14px;font-weight:600;color:#1f2937;">Please fill in your details to begin</p>';
     form.appendChild(intro);
 
     /* Name field */
     var nameField = el('div', 'pathir-form-field');
-    nameField.appendChild(el('label', 'pathir-form-label', 'Full name'));
+    nameField.appendChild(el('label', 'pathir-form-label', 'Full name *'));
     var nameInput = document.createElement('input');
     nameInput.className = 'pathir-form-input';
     nameInput.type = 'text';
@@ -1111,25 +1111,25 @@
     nameField.appendChild(nameInput);
     form.appendChild(nameField);
 
-    /* DOB field */
+    /* DOB field — native date picker */
     var dobField = el('div', 'pathir-form-field');
-    dobField.appendChild(el('label', 'pathir-form-label', 'Date of birth'));
+    dobField.appendChild(el('label', 'pathir-form-label', 'Date of birth *'));
     var dobInput = document.createElement('input');
     dobInput.className = 'pathir-form-input';
-    dobInput.type = 'text';
-    dobInput.placeholder = 'DD/MM/YYYY';
+    dobInput.type = 'date';
     dobInput.setAttribute('autocomplete', 'bday');
     dobField.appendChild(dobInput);
     form.appendChild(dobField);
 
     /* Postcode field */
     var pcField = el('div', 'pathir-form-field');
-    pcField.appendChild(el('label', 'pathir-form-label', 'Postcode'));
+    pcField.appendChild(el('label', 'pathir-form-label', 'Postcode *'));
     var pcInput = document.createElement('input');
     pcInput.className = 'pathir-form-input';
     pcInput.type = 'text';
-    pcInput.placeholder = 'e.g. SW1A 1AA';
+    pcInput.placeholder = 'SW1A 1AA';
     pcInput.setAttribute('autocomplete', 'postal-code');
+    pcInput.addEventListener('input', function () { pcInput.value = pcInput.value.toUpperCase(); });
     pcField.appendChild(pcInput);
     form.appendChild(pcField);
 
@@ -1150,7 +1150,7 @@
     form.appendChild(errorEl);
 
     /* Submit button */
-    var submitBtn = el('button', 'pathir-form-submit', 'Continue');
+    var submitBtn = el('button', 'pathir-form-submit', 'Continue \u2192');
     form.appendChild(submitBtn);
 
     /* Store references */
@@ -1207,8 +1207,9 @@
 
     /* Validation */
     if (!name) { f.errorEl.textContent = 'Please enter your name.'; return; }
-    var dob = parseDOB(dobRaw);
-    if (!dob) { f.errorEl.textContent = 'Please enter a valid date (DD/MM/YYYY).'; return; }
+    /* Native date input returns YYYY-MM-DD; fallback parser handles DD/MM/YYYY */
+    var dob = dobRaw.match(/^\d{4}-\d{2}-\d{2}$/) ? dobRaw : parseDOB(dobRaw);
+    if (!dob) { f.errorEl.textContent = 'Please select your date of birth.'; return; }
     if (!postcode) { f.errorEl.textContent = 'Please enter your postcode.'; return; }
 
     f.errorEl.textContent = '';

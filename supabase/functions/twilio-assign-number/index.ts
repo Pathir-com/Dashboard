@@ -5,7 +5,8 @@ const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID")!;
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const VAPI_WEBHOOK_URL = "https://api.vapi.ai/twilio/inbound_call";
+const ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/twilio/inbound_call";
+const SMS_WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/twilio-sms-webhook`;
 
 const twilioAuth = btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`);
 
@@ -56,6 +57,24 @@ async function twilioPost(path: string, body: Record<string, string>) {
     body: new URLSearchParams(body).toString(),
   });
   return res.json();
+}
+
+async function twilioPostUrl(url: string, body: Record<string, string>) {
+  const res = await fetch(url, {
+    method: "POST",
+    headers: {
+      Authorization: `Basic ${twilioAuth}`,
+      "Content-Type": "application/x-www-form-urlencoded",
+    },
+    body: new URLSearchParams(body).toString(),
+  });
+  return res.json();
+}
+
+/** Truncate practice name to a valid alpha sender (max 11 chars, alphanumeric + space). */
+function toAlphaSender(name: string): string {
+  const clean = name.replace(/[^A-Za-z0-9 ]/g, "").trim();
+  return clean.slice(0, 11).trimEnd() || "Pathir";
 }
 
 async function findPooledNumber(areaCode: string | null, assignedNumbers: Set<string>) {
@@ -155,7 +174,7 @@ Deno.serve(async (req) => {
     if (pooled) {
       phoneNumber = pooled.phone_number;
       await twilioPost(`/IncomingPhoneNumbers/${pooled.sid}.json`, {
-        VoiceUrl: VAPI_WEBHOOK_URL,
+        VoiceUrl: ELEVENLABS_VOICE_URL,
         VoiceMethod: "POST",
         FriendlyName: `Pathir - ${practice.name}`,
       });
@@ -168,14 +187,14 @@ Deno.serve(async (req) => {
       if (match) {
         const e164Prefix = "+44" + match.areaCode.replace(/^0/, "");
         const data = await twilioGet(
-          `/AvailablePhoneNumbers/GB/Local.json?Contains=${encodeURIComponent(e164Prefix)}&PageSize=5&VoiceEnabled=true&SmsEnabled=true`
+          `/AvailablePhoneNumbers/GB/Local.json?Contains=${encodeURIComponent(e164Prefix)}&PageSize=5&VoiceEnabled=true`
         );
         available = data.available_phone_numbers || [];
       }
 
       if (available.length === 0) {
         const data = await twilioGet(
-          `/AvailablePhoneNumbers/GB/Local.json?PageSize=5&VoiceEnabled=true&SmsEnabled=true`
+          `/AvailablePhoneNumbers/GB/Local.json?PageSize=5&VoiceEnabled=true`
         );
         available = data.available_phone_numbers || [];
       }
@@ -189,7 +208,7 @@ Deno.serve(async (req) => {
 
       const purchased = await twilioPost("/IncomingPhoneNumbers.json", {
         PhoneNumber: available[0].phone_number,
-        VoiceUrl: VAPI_WEBHOOK_URL,
+        VoiceUrl: ELEVENLABS_VOICE_URL,
         VoiceMethod: "POST",
         FriendlyName: `Pathir - ${practice.name}`,
       });
@@ -204,14 +223,79 @@ Deno.serve(async (req) => {
       phoneNumber = purchased.phone_number;
     }
 
-    // Save to practice
+    // Save voice number to practice
     await adminClient
       .from("practices")
       .update({ twilio_phone_number: phoneNumber })
       .eq("id", practiceId);
 
+    // ── Auto-provision SMS (best-effort, non-blocking) ──
+    let smsNumber: string | null = null;
+    let messagingServiceSid: string | null = null;
+    try {
+      // Buy a UK mobile number for SMS
+      const mobileAvail = await twilioGet(
+        "/AvailablePhoneNumbers/GB/Mobile.json?SmsEnabled=true&VoiceEnabled=true&PageSize=3",
+      );
+      const mobileNums = mobileAvail.available_phone_numbers || [];
+
+      if (mobileNums.length > 0) {
+        const mobilePurchased = await twilioPost("/IncomingPhoneNumbers.json", {
+          PhoneNumber: mobileNums[0].phone_number,
+          SmsUrl: SMS_WEBHOOK_URL,
+          SmsMethod: "POST",
+          FriendlyName: `Pathir SMS - ${practice.name}`,
+        });
+
+        if (mobilePurchased.sid) {
+          smsNumber = mobilePurchased.phone_number;
+
+          // Create Messaging Service
+          const svc = await twilioPostUrl("https://messaging.twilio.com/v1/Services", {
+            FriendlyName: `Pathir - ${practice.name}`,
+            InboundRequestUrl: SMS_WEBHOOK_URL,
+            InboundMethod: "POST",
+            StickySender: "true",
+          });
+
+          if (svc.sid) {
+            messagingServiceSid = svc.sid;
+
+            // Add alpha sender (practice name)
+            await twilioPostUrl(
+              `https://messaging.twilio.com/v1/Services/${svc.sid}/AlphaSenders`,
+              { AlphaSender: toAlphaSender(practice.name) },
+            );
+
+            // Add mobile number to sender pool
+            await twilioPostUrl(
+              `https://messaging.twilio.com/v1/Services/${svc.sid}/PhoneNumbers`,
+              { PhoneNumberSid: mobilePurchased.sid },
+            );
+          }
+
+          // Save SMS fields
+          await adminClient
+            .from("practices")
+            .update({
+              twilio_sms_number: smsNumber,
+              messaging_service_sid: messagingServiceSid,
+            })
+            .eq("id", practiceId);
+        }
+      }
+    } catch (smsErr) {
+      // SMS provisioning is best-effort — voice number is already assigned
+      console.error("[ASSIGN] SMS provisioning failed (non-fatal):", smsErr);
+    }
+
     return new Response(
-      JSON.stringify({ phoneNumber, message: "Number assigned successfully" }),
+      JSON.stringify({
+        phoneNumber,
+        smsNumber,
+        messagingServiceSid,
+        message: "Number assigned successfully",
+      }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
     );
   } catch (err) {

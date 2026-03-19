@@ -1,5 +1,5 @@
 import React from 'react';
-import { Inbox, Settings, CalendarDays, MessageCircle, LogOut } from 'lucide-react';
+import { Inbox, Settings, CalendarDays, LogOut } from 'lucide-react';
 
 export default function ClinicSidebar({ currentView, onNavigate, onLogout }) {
   return (
@@ -36,17 +36,6 @@ export default function ClinicSidebar({ currentView, onNavigate, onLogout }) {
           }`}
         >
           <CalendarDays className="w-5 h-5" />
-        </button>
-        <button
-          onClick={() => onNavigate('chat')}
-          title="Chat"
-          className={`p-2.5 rounded-lg transition-colors ${
-            currentView === 'chat'
-              ? 'bg-slate-900 text-white'
-              : 'text-slate-400 hover:text-slate-700 hover:bg-slate-50'
-          }`}
-        >
-          <MessageCircle className="w-5 h-5" />
         </button>
       </div>
 
