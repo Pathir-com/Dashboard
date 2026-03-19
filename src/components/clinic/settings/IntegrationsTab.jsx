@@ -566,7 +566,7 @@ export default function IntegrationsTab({
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {CHANNELS.map(ch => renderCard(ch, handleChannelClick))}
         </div>
-        {['phone_enabled', 'email_enabled', 'web_chat_enabled'].includes(expanded) && renderPanel()}
+        {['phone_enabled', 'email_enabled', 'web_chat_enabled', 'facebook_enabled', 'instagram_enabled'].includes(expanded) && renderPanel()}
       </section>
 
       {/* Payments & Services */}
@@ -584,7 +584,7 @@ export default function IntegrationsTab({
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {PMS_SYSTEMS.map(pms => renderCard(pms, openPanel))}
         </div>
-        {['pms_pearl', 'pms_aerona', 'facebook_enabled', 'instagram_enabled'].includes(expanded) && renderPanel()}
+        {['pms_pearl', 'pms_aerona'].includes(expanded) && renderPanel()}
       </section>
     </div>
   );
