@@ -412,7 +412,7 @@ export async function listEnquiries(practiceId, sortField) {
     .from('enquiries')
     .select(`
       *,
-      conversation:conversations!enquiry_id (
+      linked_conversations:conversations!enquiry_id (
         id, summary, transcript, status, outcome, duration_seconds,
         started_at, ended_at, channel
       )
@@ -430,15 +430,29 @@ export async function listEnquiries(practiceId, sortField) {
   const { data, error } = await query;
   if (error) throw error;
 
-  // Flatten: conversation join returns array (one-to-many), pick the first
-  return (data || []).map(e => ({
-    ...e,
-    conversation_summary: e.conversation?.[0]?.summary || null,
-    conversation_transcript: e.conversation?.[0]?.transcript || null,
-    conversation_status: e.conversation?.[0]?.status || null,
-    conversation_outcome: e.conversation?.[0]?.outcome || null,
-    conversation_duration: e.conversation?.[0]?.duration_seconds || null,
-  }));
+  return (data || []).map(e => {
+    const linked = e.linked_conversations?.[0];
+    return {
+      ...e,
+      conversation_summary: linked?.summary || null,
+      conversation_transcript: linked?.transcript || null,
+      conversation_status: linked?.status || null,
+      conversation_outcome: linked?.outcome || null,
+      conversation_duration: linked?.duration_seconds || null,
+      conversation: (e.conversation && e.conversation.length > 0)
+        ? e.conversation
+        : linked?.transcript
+          ? linked.transcript.map(m => ({
+              role: /^(user|patient)$/i.test(m.role) ? 'patient' : 'clinic',
+              message: m.content || m.message || m.text || '',
+              timestamp: typeof m.timestamp === 'number'
+                ? new Date((linked.started_at ? new Date(linked.started_at).getTime() : Date.now()) + m.timestamp * 1000).toISOString()
+                : m.timestamp || null,
+            }))
+          : [],
+      linked_conversations: undefined,
+    };
+  });
 }
 
 export async function createEnquiry(enquiryData) {
