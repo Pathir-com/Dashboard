@@ -157,12 +157,58 @@ serve(async (req: Request) => {
     }
   }
 
+  /* ── Create enquiry + conversation for web chat (so dashboard shows it) ── */
+  let enquiryId: string | null = null;
+  let conversationDbId: string | null = null;
+
+  if (practiceId && req.method === "POST" && !ambiguous) {
+    const phone = visitorPhone ? visitorPhone.replace(/[\s\-()]/g, "").trim() : null;
+    const normalised = phone
+      ? (phone.startsWith("0") && phone.length >= 10 ? "+44" + phone.slice(1) : phone.match(/^44\d{9,}$/) ? "+" + phone : phone)
+      : null;
+
+    // Create contact if new
+    if (!contactId && (normalised || visitorName)) {
+      const { data: newContact } = await db.from("contacts").insert({
+        practice_id: practiceId, name: visitorName || "Web Chat Visitor",
+        phone: normalised, source: "chat",
+      }).select("id").single();
+      if (newContact) { contactId = newContact.id; }
+    }
+
+    // Create enquiry
+    const { data: enquiry } = await db.from("enquiries").insert({
+      practice_id: practiceId,
+      patient_name: visitorName || "Web Chat Visitor",
+      phone_number: normalised,
+      message: "Web chat session",
+      source: "chat",
+      is_urgent: false, is_completed: false,
+      contact_id: contactId,
+    }).select("id").single();
+    enquiryId = enquiry?.id || null;
+
+    // Create conversation record (post-call webhook will update with transcript)
+    const { data: conv } = await db.from("conversations").insert({
+      practice_id: practiceId,
+      contact_id: contactId,
+      channel: "web_chat",
+      status: "active",
+      caller_name: visitorName || null,
+      caller_phone: normalised,
+      enquiry_id: enquiryId,
+    }).select("id").single();
+    conversationDbId = conv?.id || null;
+  }
+
   return new Response(JSON.stringify({
     ...data,
     practice_id: practiceId,
     contact_id: contactId,
     is_returning_patient: isReturningPatient,
     ambiguous,
+    enquiry_id: enquiryId,
+    conversation_db_id: conversationDbId,
   }), {
     headers: JSON_HEADERS,
   });

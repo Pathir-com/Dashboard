@@ -1255,6 +1255,8 @@
       self._signedUrl = data.signed_url;
       self._contactId = data.contact_id || null;
       self._isReturningPatient = !!data.is_returning_patient;
+      self._enquiryId = data.enquiry_id || null;
+      self._conversationDbId = data.conversation_db_id || null;
       self.client.practiceId = data.practice_id || null;
 
       self._transitionToChat();
@@ -1295,6 +1297,8 @@
       visitor_phone: self._visitorPhone || '',
       contact_id: self._contactId || '',
       is_returning_patient: self._isReturningPatient ? 'true' : 'false',
+      enquiry_id: self._enquiryId || '',
+      conversation_db_id: self._conversationDbId || '',
     };
 
     /* Connect using pre-fetched signed URL */
