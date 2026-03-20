@@ -82,7 +82,13 @@ jobs:
             # Deploy if function code or shared helpers changed
             if echo "$CHANGED" | grep -qE "^supabase/functions/($fn_name|_shared)/"; then
               echo "Deploying $fn_name..."
-              supabase functions deploy "$fn_name" --project-ref "$PROJECT_REF"
+              # External webhooks (ElevenLabs, Chatbase, Meta, Twilio) call without JWT
+              NO_JWT_FUNCTIONS="elevenlabs-tool elevenlabs-conversation elevenlabs-webhook chatbase-action chatbase-webhook chatbase-save meta-webhook twilio-sms-webhook twilio-disconnected-voice"
+              if echo "$NO_JWT_FUNCTIONS" | grep -qw "$fn_name"; then
+                supabase functions deploy "$fn_name" --no-verify-jwt --project-ref "$PROJECT_REF"
+              else
+                supabase functions deploy "$fn_name" --project-ref "$PROJECT_REF"
+              fi
             fi
           done
 
