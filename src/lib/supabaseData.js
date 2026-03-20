@@ -514,6 +514,17 @@ export async function listPracticeEmailEvents(practiceId, limit = 50) {
   return data || [];
 }
 
+export async function listSmsEvents(enquiryId) {
+  const { data, error } = await supabase
+    .from('sms_events')
+    .select('id, sms_type, recipient_phone, body, status, sent_at, twilio_sid')
+    .eq('enquiry_id', enquiryId)
+    .order('sent_at', { ascending: false });
+
+  if (error) throw error;
+  return data || [];
+}
+
 // --------------- Practitioners ---------------
 
 /** Fetch all active practitioners for a practice, with their working hours. */

@@ -278,7 +278,7 @@ function formatDate(isoDate: string) {
 }
 
 // deno-lint-ignore no-explicit-any
-async function sendConfirmationSms(opts: { contactPhone: string; practiceName: string; serviceName: string; date: string; time: string; practitionerName?: string; messagingServiceSid?: string; twilioSmsNumber?: string; smsEnabled?: boolean }) {
+async function sendConfirmationSms(db: DB, opts: { contactPhone: string; practiceName: string; serviceName: string; date: string; time: string; practitionerName?: string; messagingServiceSid?: string; twilioSmsNumber?: string; smsEnabled?: boolean; practiceId?: string; contactId?: string; enquiryId?: string }) {
   if (!TWILIO_SID || !TWILIO_TOKEN || !opts.contactPhone || opts.smsEnabled === false) return;
   const from = opts.messagingServiceSid || opts.twilioSmsNumber;
   if (!from) return;
@@ -288,10 +288,18 @@ async function sendConfirmationSms(opts: { contactPhone: string; practiceName: s
     body += `\n\nIf you need to change or cancel, just reply to this text or chat with us on our website. We look forward to seeing you!`;
     const params: Record<string, string> = { To: opts.contactPhone, Body: body };
     if (opts.messagingServiceSid) params.MessagingServiceSid = opts.messagingServiceSid; else params.From = opts.twilioSmsNumber!;
-    await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`, {
+    const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`, {
       method: "POST", headers: { Authorization: `Basic ${btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`)}`, "Content-Type": "application/x-www-form-urlencoded" },
       body: new URLSearchParams(params).toString(),
     });
+    const result = await res.json();
+    // Track in sms_events
+    await db.from("sms_events").insert({
+      practice_id: opts.practiceId || null, enquiry_id: opts.enquiryId || null, contact_id: opts.contactId || null,
+      sms_type: "confirmation", recipient_phone: opts.contactPhone,
+      from_sender: opts.messagingServiceSid ? opts.practiceName : opts.twilioSmsNumber,
+      body, status: res.ok ? "sent" : "failed", twilio_sid: result.sid || null,
+    }).catch(() => {});
   } catch (err) { console.error("[CONFIRM SMS]", err); }
 }
 
@@ -585,7 +593,7 @@ async function handleRequestAppointment(db: DB, args: any) {
     sideEffects.push(db.from("conversations").update({ outcome: "booking_made" }).eq("enquiry_id", enquiry_id));
   }
   if (hasSlot && contactData?.phone && practice) {
-    sideEffects.push(sendConfirmationSms({ contactPhone: contactData.phone, practiceName: practice.name, serviceName, date: slot.date, time: slot.start_time, practitionerName: slot.practitioner_name || null, messagingServiceSid: practice.messaging_service_sid, twilioSmsNumber: practice.twilio_sms_number, smsEnabled: practice.integrations?.sms_enabled !== false }).catch(() => {}));
+    sideEffects.push(sendConfirmationSms(db, { contactPhone: contactData.phone, practiceName: practice.name, serviceName, date: slot.date, time: slot.start_time, practitionerName: slot.practitioner_name || null, messagingServiceSid: practice.messaging_service_sid, twilioSmsNumber: practice.twilio_sms_number, smsEnabled: practice.integrations?.sms_enabled !== false, practiceId: practice_id, contactId: contact_id, enquiryId: enquiry_id }).catch(() => {}));
   }
   if (hasSlot && contactData?.email && practice) {
     sendConfirmationEmail({ to: contactData.email, patientName: contactData.name || "Patient", practiceName: practice.name, serviceName, date: slot.date, time: slot.start_time, practitionerName: slot.practitioner_name || null, patientInstructions: serviceData?.patient_instructions || undefined, practiceId: practice_id, contactId: contact_id });

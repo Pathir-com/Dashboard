@@ -1,6 +1,6 @@
 import React, { useState, useEffect } from 'react';
-import { listEmailEvents } from '@/lib/supabaseData';
-import { Mail, CheckCircle2, Eye, MousePointerClick, Loader2, Send } from 'lucide-react';
+import { listEmailEvents, listSmsEvents } from '@/lib/supabaseData';
+import { Mail, CheckCircle2, Eye, MousePointerClick, Loader2, Send, MessageCircle, Phone } from 'lucide-react';
 import { format } from 'date-fns';
 import { supabase } from '@/lib/supabase';
 
@@ -12,10 +12,21 @@ const STATUS_CONFIG = {
   failed:    { label: 'Failed',   color: 'text-red-600',   bg: 'bg-red-50',     icon: Mail },
 };
 
+const TYPE_LABELS = {
+  confirmation: 'Booking Confirmation',
+  reminder: 'Day-Before Reminder',
+  payment_link: 'Payment Link',
+  receipt: 'Payment Receipt',
+  new_patient_welcome: 'Welcome Email',
+  appointment_confirmation: 'Booking Confirmation',
+  email_verification: 'Email Verification',
+};
+
 export default function EmailFollowUp({ enquiryId, practiceId, patientName, contactId }) {
-  const [events, setEvents] = useState([]);
+  const [emailEvents, setEmailEvents] = useState([]);
+  const [smsEvents, setSmsEvents] = useState([]);
   const [loading, setLoading] = useState(true);
-  const [contactEmail, setContactEmail] = useState(null);
+  const [contactInfo, setContactInfo] = useState({ email: null, phone: null });
 
   useEffect(() => {
     if (!enquiryId) return;
@@ -26,20 +37,24 @@ export default function EmailFollowUp({ enquiryId, practiceId, patientName, cont
     if (!contactId) return;
     supabase
       .from('contacts')
-      .select('email')
+      .select('email, phone')
       .eq('id', contactId)
       .single()
       .then(({ data }) => {
-        if (data?.email) setContactEmail(data.email);
+        if (data) setContactInfo({ email: data.email, phone: data.phone });
       });
   }, [contactId]);
 
   async function loadEvents() {
     try {
-      const data = await listEmailEvents(enquiryId);
-      setEvents(data);
+      const [emails, sms] = await Promise.all([
+        listEmailEvents(enquiryId),
+        listSmsEvents(enquiryId),
+      ]);
+      setEmailEvents(emails);
+      setSmsEvents(sms);
     } catch (err) {
-      console.error('Failed to load email events', err);
+      console.error('Failed to load follow-up events', err);
     } finally {
       setLoading(false);
     }
@@ -53,31 +68,44 @@ export default function EmailFollowUp({ enquiryId, practiceId, patientName, cont
     );
   }
 
+  const allEvents = [
+    ...emailEvents.map(ev => ({ ...ev, channel: 'email' })),
+    ...smsEvents.map(ev => ({ ...ev, channel: 'sms' })),
+  ].sort((a, b) => new Date(b.sent_at || b.created_at) - new Date(a.sent_at || a.created_at));
+
   return (
     <div className="space-y-3">
-      {events.length === 0 ? (
-        <p className="text-sm text-slate-400 text-center py-2">No emails sent yet</p>
+      {allEvents.length === 0 ? (
+        <p className="text-sm text-slate-400 text-center py-2">No follow-ups sent yet</p>
       ) : (
         <div className="space-y-2">
-          {events.map((ev) => {
+          {allEvents.map((ev) => {
+            const isEmail = ev.channel === 'email';
             const cfg = STATUS_CONFIG[ev.status] || STATUS_CONFIG.sent;
-            const Icon = cfg.icon;
+            const Icon = isEmail ? cfg.icon : MessageCircle;
+            const typeLabel = isEmail
+              ? TYPE_LABELS[ev.email_type] || ev.email_type
+              : TYPE_LABELS[ev.sms_type] || ev.sms_type;
+
             return (
               <div key={ev.id} className="flex items-start gap-3 bg-white rounded-lg border border-slate-100 p-3">
-                <div className={`p-1.5 rounded-full ${cfg.bg}`}>
-                  <Icon className={`w-3.5 h-3.5 ${cfg.color}`} />
+                <div className={`p-1.5 rounded-full ${isEmail ? cfg.bg : 'bg-emerald-50'}`}>
+                  <Icon className={`w-3.5 h-3.5 ${isEmail ? cfg.color : 'text-emerald-600'}`} />
                 </div>
                 <div className="flex-1 min-w-0">
                   <div className="flex items-center gap-2">
                     <span className="text-xs font-medium text-slate-700 truncate">
-                      {ev.subject || ev.email_type}
+                      {isEmail ? (ev.subject || typeLabel) : typeLabel}
+                    </span>
+                    <span className={`text-xs px-1.5 py-0.5 rounded-full ${isEmail ? 'bg-blue-50 text-blue-600' : 'bg-emerald-50 text-emerald-600'}`}>
+                      {isEmail ? 'Email' : 'SMS'}
                     </span>
                     <span className={`text-xs px-1.5 py-0.5 rounded-full ${cfg.bg} ${cfg.color}`}>
                       {cfg.label}
                     </span>
                   </div>
                   <p className="text-xs text-slate-400 mt-0.5">
-                    To: {ev.recipient_email}
+                    To: {isEmail ? ev.recipient_email : ev.recipient_phone}
                   </p>
                   <div className="flex items-center gap-3 mt-1 text-xs text-slate-400">
                     {ev.sent_at && (
@@ -103,10 +131,11 @@ export default function EmailFollowUp({ enquiryId, practiceId, patientName, cont
         </div>
       )}
 
-      {contactEmail && (
-        <p className="text-xs text-slate-400 text-center">
-          Patient email: {contactEmail}
-        </p>
+      {(contactInfo.email || contactInfo.phone) && (
+        <div className="flex items-center justify-center gap-4 text-xs text-slate-400">
+          {contactInfo.email && <span>Email: {contactInfo.email}</span>}
+          {contactInfo.phone && <span>Phone: {contactInfo.phone}</span>}
+        </div>
       )}
     </div>
   );
