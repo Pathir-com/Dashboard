@@ -487,11 +487,14 @@ async function handleSearchAvailability(db: any, args: any) {
 
   let practitioners;
   if (practitionerIds.length > 0) {
-    const { data } = await db.from("practitioners").select("id, name, working_hours, bio, credentials").in("id", practitionerIds);
+    // Service has mapped practitioners — use them, ordered by seniority
+    const { data } = await db.from("practitioners").select("id, name, working_hours, bio, credentials, sort_order, years_experience")
+      .in("id", practitionerIds).order("sort_order", { ascending: true });
     practitioners = data || [];
   } else {
-    // Fallback: all practitioners at the practice
-    const { data } = await db.from("practitioners").select("id, name, working_hours, bio, credentials").eq("practice_id", practice_id);
+    // No mapping — default to most senior practitioner (lowest sort_order)
+    const { data } = await db.from("practitioners").select("id, name, working_hours, bio, credentials, sort_order, years_experience")
+      .eq("practice_id", practice_id).order("sort_order", { ascending: true }).limit(1);
     practitioners = data || [];
   }
 
