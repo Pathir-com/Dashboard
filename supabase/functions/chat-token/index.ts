@@ -120,21 +120,37 @@ serve(async (req: Request) => {
   let isReturningPatient = false;
   let ambiguous = false;
 
-  if (req.method === "POST" && practiceId && visitorName && visitorDob && visitorPostcode) {
+  if (req.method === "POST" && practiceId) {
     try {
-      const result = await matchContactByIdentity(db, {
-        practiceId,
-        name: visitorName,
-        dob: visitorDob,
-        postcode: visitorPostcode,
-        phone: visitorPhone,
-      });
+      // Try phone match first (most reliable)
+      if (visitorPhone) {
+        const normalized = visitorPhone.replace(/[\s\-()]/g, "").trim();
+        const phoneVariants = [normalized];
+        if (normalized.startsWith("0") && normalized.length >= 10) phoneVariants.push("+44" + normalized.slice(1));
+        if (normalized.startsWith("+44")) phoneVariants.push("0" + normalized.slice(3));
 
-      if (result.match === "exact" && result.contact) {
-        contactId = result.contact.id;
-        isReturningPatient = true;
-      } else if (result.match === "ambiguous") {
-        ambiguous = true;
+        for (const pv of phoneVariants) {
+          const { data: byPhone } = await db.from("contacts").select("id, name")
+            .eq("practice_id", practiceId).eq("phone", pv).limit(1).single();
+          if (byPhone) {
+            contactId = byPhone.id;
+            isReturningPatient = true;
+            break;
+          }
+        }
+      }
+
+      // Fallback: identity match by name + DOB + postcode (if all provided)
+      if (!contactId && visitorName && visitorDob && visitorPostcode) {
+        const result = await matchContactByIdentity(db, {
+          practiceId, name: visitorName, dob: visitorDob, postcode: visitorPostcode, phone: visitorPhone,
+        });
+        if (result.match === "exact" && result.contact) {
+          contactId = result.contact.id;
+          isReturningPatient = true;
+        } else if (result.match === "ambiguous") {
+          ambiguous = true;
+        }
       }
     } catch (err) {
       console.error("[chat-token] Contact matching failed:", err);
