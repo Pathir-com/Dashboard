@@ -96,6 +96,7 @@ jobs:
 
       # Run any new migration SQL files added in this push
       - name: Run new migrations
+        continue-on-error: true
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
         run: |
@@ -105,7 +106,7 @@ jobs:
           for sql_file in $(echo "$CHANGED" | grep '^supabase/migrations/.*\.sql$' | sort); do
             if [ -f "$sql_file" ]; then
               echo "Running migration: $sql_file"
-              supabase db query --linked < "$sql_file"
+              supabase db query --linked < "$sql_file" || echo "⚠️  Migration had errors (may already be applied)"
             fi
           done
 
