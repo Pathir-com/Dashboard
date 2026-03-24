@@ -534,10 +534,29 @@ async function handleRequestAppointment(db: DB, args: any) {
   if (!practice_id) { const p = await loadPractice(db, {}); practice_id = p?.id; }
   if (!practice_id) return { success: false, message: "Practice not found." };
 
-  // Resolve contact_id from enquiry if not passed
+  // Resolve contact_id from enquiry, or enquiry_id from contact
   if (!contact_id && enquiry_id) {
     const { data: enq } = await db.from("enquiries").select("contact_id").eq("id", enquiry_id).single();
     if (enq?.contact_id) contact_id = enq.contact_id;
+  }
+  if (!enquiry_id && contact_id && practice_id) {
+    // Find the most recent open enquiry for this contact (created in lookup_caller_phone)
+    const { data: recentEnq } = await db.from("enquiries").select("id")
+      .eq("contact_id", contact_id).eq("practice_id", practice_id).eq("is_completed", false)
+      .order("created_at", { ascending: false }).limit(1).single();
+    if (recentEnq) enquiry_id = recentEnq.id;
+  }
+  if (!enquiry_id && practice_id) {
+    // Last resort: find the most recent open enquiry for this practice (within last 10 min)
+    const tenMinAgo = new Date(Date.now() - 10 * 60 * 1000).toISOString();
+    const { data: recentEnq } = await db.from("enquiries").select("id, contact_id")
+      .eq("practice_id", practice_id).eq("is_completed", false)
+      .gte("created_at", tenMinAgo)
+      .order("created_at", { ascending: false }).limit(1).single();
+    if (recentEnq) {
+      enquiry_id = recentEnq.id;
+      if (!contact_id && recentEnq.contact_id) contact_id = recentEnq.contact_id;
+    }
   }
 
   // Fetch all needed data in parallel
