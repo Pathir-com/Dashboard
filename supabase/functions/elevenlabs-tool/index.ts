@@ -131,7 +131,6 @@ async function loadPractice(db: DB, opts: { practiceId?: string; twilioNumber?: 
   if (opts.practiceId) { const { data } = await db.from("practices").select(PRACTICE_COLS).eq("id", opts.practiceId).single(); practice = data; }
   if (!practice && opts.twilioNumber) { const { data } = await db.from("practices").select(PRACTICE_COLS).eq("twilio_phone_number", opts.twilioNumber).single(); practice = data; }
   if (!practice && opts.agentId) { const { data } = await db.from("practices").select(PRACTICE_COLS).eq("elevenlabs_agent_id", opts.agentId).single(); practice = data; }
-  if (!practice) { const { data } = await db.from("practices").select(PRACTICE_COLS).limit(1).single(); practice = data; }
 
   if (practice) practiceCache.set(practice.id, { data: practice, expiresAt: Date.now() + 30000 });
   return practice;

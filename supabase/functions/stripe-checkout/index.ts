@@ -16,7 +16,6 @@ import { corsHeaders } from "../_shared/cors.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-const PRACTICE_ID = "7a2d6e46-5941-46a7-b858-88c0483b1e12";
 
 function generateRef(): string {
   const chars = "ABCDEFGHJKLMNPQRSTUVWXYZ23456789";
@@ -37,7 +36,12 @@ Deno.serve(async (req) => {
     const patientEmail = body.patient_email || body.email || "";
     const phone = body.phone || "";
     const description = body.description || "Dental Payment";
-    const practiceId = body.practice_id || PRACTICE_ID;
+    const practiceId = body.practice_id;
+    if (!practiceId) {
+      return new Response(JSON.stringify({ error: "practice_id is required" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
+    }
 
     if (!amountPence || amountPence < 100) {
       return new Response(JSON.stringify({ error: "Amount must be at least £1.00 (100 pence)" }), {

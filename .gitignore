@@ -30,3 +30,4 @@ dist-ssr
 
 .env
 supabase/.temp/.base44-import/
+supabase/.temp/

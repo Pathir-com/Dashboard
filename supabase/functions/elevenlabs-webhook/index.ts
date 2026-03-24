@@ -115,15 +115,25 @@ Deno.serve(async (req) => {
       }
     }
 
-    // Fallback to hardcoded practice if no number match
+    // Fallback: resolve by ElevenLabs agent_id
     if (!practiceId) {
-      practiceId = "7a2d6e46-5941-46a7-b858-88c0483b1e12";
-      const { data: practice } = await adminClient
-        .from("practices")
-        .select("name")
-        .eq("id", practiceId)
-        .single();
-      practiceName = practice?.name || "Unknown";
+      const agentId = data.agent_id || data.metadata?.agent_id || "";
+      if (agentId) {
+        const { data: practice } = await adminClient
+          .from("practices").select("id, name")
+          .eq("elevenlabs_agent_id", agentId).single();
+        if (practice) {
+          practiceId = practice.id;
+          practiceName = practice.name;
+        }
+      }
+    }
+
+    if (!practiceId) {
+      console.error("[ELEVENLABS WEBHOOK] No practice matched. twilioNumber:", twilioNumber);
+      return new Response(JSON.stringify({ message: "No practice matched" }), {
+        status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" },
+      });
     }
 
     // Find or create contact

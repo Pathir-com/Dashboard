@@ -53,6 +53,7 @@ Deno.serve(async (req) => {
     const amount_pence = body.amount_pence;
     const patient_name = body.patient_name || "";
     const description = body.description || "";
+    const practice_id = body.practice_id || "";
 
     if (!phone && !email) {
       return new Response(JSON.stringify({ success: false, message: "Need phone or email to find practice and send link" }), {
@@ -62,24 +63,18 @@ Deno.serve(async (req) => {
 
     const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Find the contact and their practice
+    // Find the contact — scoped to practice if provided
     let contact = null;
     if (phone) {
-      const { data } = await adminClient
-        .from("contacts")
-        .select("*, practices(*)")
-        .eq("phone", phone)
-        .limit(1)
-        .single();
+      let q = adminClient.from("contacts").select("*, practices(*)").eq("phone", phone);
+      if (practice_id) q = q.eq("practice_id", practice_id);
+      const { data } = await q.limit(1).single();
       contact = data;
     }
     if (!contact && email) {
-      const { data } = await adminClient
-        .from("contacts")
-        .select("*, practices(*)")
-        .eq("email", email)
-        .limit(1)
-        .single();
+      let q = adminClient.from("contacts").select("*, practices(*)").eq("email", email);
+      if (practice_id) q = q.eq("practice_id", practice_id);
+      const { data } = await q.limit(1).single();
       contact = data;
     }
 

@@ -2,6 +2,7 @@ import React, { useState } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { createPractice } from '@/lib/supabaseData';
+import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 
 const DEFAULT_HOURS = [
@@ -54,6 +55,19 @@ export default function Onboarding() {
         opening_hours: form.opening_hours,
         onboarding_completed: true,
       });
+
+      // Auto-provision AI agent (non-blocking — clinic works even if this fails)
+      try {
+        const { data: session } = await supabase.auth.getSession();
+        if (session?.session?.access_token) {
+          await supabase.functions.invoke('provision-practice', {
+            body: { practiceId: practice.id },
+          });
+        }
+      } catch (provisionErr) {
+        console.error('Agent provisioning failed (non-fatal):', provisionErr);
+      }
+
       toast.success('Clinic created! Welcome to Pathir.');
       navigate(`/Clinic?id=${practice.id}`);
     } catch (err) {

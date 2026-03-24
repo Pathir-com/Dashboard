@@ -177,7 +177,7 @@ Deno.serve(async (req) => {
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     // Pull the practice name + email from the DB for From/Reply-To
-    let clinicName = data.clinic_name || "Spark Dental Clinic";
+    let clinicName = data.clinic_name || "Dental Clinic";
     let practiceEmail = "";
     let resolvedPracticeId = practice_id || null;
 

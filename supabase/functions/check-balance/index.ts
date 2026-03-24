@@ -48,6 +48,7 @@ Deno.serve(async (req) => {
 
     const phone = body.phone || "";
     const email = body.email || "";
+    const practiceId = body.practice_id || "";
 
     if (!phone && !email) {
       return new Response(JSON.stringify({
@@ -58,28 +59,23 @@ Deno.serve(async (req) => {
 
     const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Find the contact
+    // Find the contact — scoped to practice if provided
     // deno-lint-ignore no-explicit-any
     let contact: any = null;
+    const contactCols = "id, name, phone, email, balance_pence, balance_description";
 
     if (phone) {
       const normalized = normalizePhone(phone);
-      const { data } = await adminClient
-        .from("contacts")
-        .select("id, name, phone, email, balance_pence, balance_description")
-        .eq("phone", normalized)
-        .limit(1)
-        .single();
+      let q = adminClient.from("contacts").select(contactCols).eq("phone", normalized);
+      if (practiceId) q = q.eq("practice_id", practiceId);
+      const { data } = await q.limit(1).single();
       contact = data;
     }
 
     if (!contact && email) {
-      const { data } = await adminClient
-        .from("contacts")
-        .select("id, name, phone, email, balance_pence, balance_description")
-        .eq("email", email)
-        .limit(1)
-        .single();
+      let q = adminClient.from("contacts").select(contactCols).eq("email", email);
+      if (practiceId) q = q.eq("practice_id", practiceId);
+      const { data } = await q.limit(1).single();
       contact = data;
     }
 

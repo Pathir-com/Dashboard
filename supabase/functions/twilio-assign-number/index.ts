@@ -5,6 +5,7 @@ const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID")!;
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY") || "";
 const ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/twilio/inbound_call";
 const SMS_WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/twilio-sms-webhook`;
 
@@ -261,11 +262,37 @@ Deno.serve(async (req) => {
       console.error("[ASSIGN] SMS provisioning failed (non-fatal):", smsErr);
     }
 
+    // ── Register phone number with ElevenLabs agent ──
+    let elevenlabsRegistered = false;
+    if (practice.elevenlabs_agent_id && ELEVENLABS_API_KEY) {
+      try {
+        const elRes = await fetch("https://api.elevenlabs.io/v1/convai/phone-numbers/create", {
+          method: "POST",
+          headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
+          body: JSON.stringify({
+            phone_number: phoneNumber,
+            provider: "twilio",
+            label: `Pathir - ${practice.name}`,
+            agent_id: practice.elevenlabs_agent_id,
+            twilio_config: { account_sid: TWILIO_SID, auth_token: TWILIO_TOKEN },
+          }),
+        });
+        elevenlabsRegistered = elRes.ok;
+        if (!elRes.ok) console.error("[ASSIGN] ElevenLabs phone registration failed:", await elRes.text());
+        else console.log("[ASSIGN] Phone registered with ElevenLabs agent:", practice.elevenlabs_agent_id);
+      } catch (elErr) {
+        console.error("[ASSIGN] ElevenLabs registration error (non-fatal):", elErr);
+      }
+    } else if (!practice.elevenlabs_agent_id) {
+      console.warn("[ASSIGN] No elevenlabs_agent_id — phone registered in Twilio only. Provision agent first.");
+    }
+
     return new Response(
       JSON.stringify({
         phoneNumber,
         messagingServiceSid,
         alphaSender,
+        elevenlabsRegistered,
         message: "Number assigned successfully",
       }),
       { headers: { ...corsHeaders, "Content-Type": "application/json" } }
