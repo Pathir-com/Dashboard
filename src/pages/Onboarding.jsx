@@ -1,9 +1,11 @@
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
 import { createPractice } from '@/lib/supabaseData';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
+
+const STORAGE_KEY = 'pathir_onboarding_draft';
 
 const DEFAULT_HOURS = [
   { day: 'Monday', is_open: true, open_time: '09:00', close_time: '17:30' },
@@ -20,15 +22,25 @@ export default function Onboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+
+  // Pre-fill clinic name from auth metadata (if entered during signup)
+  const savedDraft = (() => {
+    try { return JSON.parse(localStorage.getItem(STORAGE_KEY) || 'null'); } catch { return null; }
+  })();
+
   const [form, setForm] = useState({
-    name: '',
-    address: '',
-    phone: '',
+    name: savedDraft?.name || user?.user_metadata?.clinic_name || '',
+    address: savedDraft?.address || '',
     email: user?.email || '',
-    website: '',
-    practice_type: 'Private',
-    opening_hours: DEFAULT_HOURS,
+    website: savedDraft?.website || '',
+    practice_type: savedDraft?.practice_type || 'Private',
+    opening_hours: savedDraft?.opening_hours || DEFAULT_HOURS,
   });
+
+  // Persist draft to localStorage on every change (resume on return)
+  useEffect(() => {
+    localStorage.setItem(STORAGE_KEY, JSON.stringify(form));
+  }, [form]);
 
   const update = (field, value) => setForm(prev => ({ ...prev, [field]: value }));
 
@@ -48,7 +60,6 @@ export default function Onboarding() {
       const practice = await createPractice({
         name: form.name,
         address: form.address,
-        phone: form.phone,
         email: form.email,
         website: form.website,
         practice_type: form.practice_type,
@@ -56,17 +67,17 @@ export default function Onboarding() {
         onboarding_completed: true,
       });
 
-      // Auto-provision AI agent (non-blocking — clinic works even if this fails)
+      // Auto-provision AI agent (non-blocking)
       try {
-        const { data: session } = await supabase.auth.getSession();
-        if (session?.session?.access_token) {
-          await supabase.functions.invoke('provision-practice', {
-            body: { practiceId: practice.id },
-          });
-        }
+        await supabase.functions.invoke('provision-practice', {
+          body: { practiceId: practice.id },
+        });
       } catch (provisionErr) {
         console.error('Agent provisioning failed (non-fatal):', provisionErr);
       }
+
+      // Clear draft
+      localStorage.removeItem(STORAGE_KEY);
 
       toast.success('Clinic created! Welcome to Pathir.');
       navigate(`/Clinic?id=${practice.id}`);
@@ -89,8 +100,8 @@ export default function Onboarding() {
         {/* Progress */}
         <div className="flex items-center gap-2 mb-8">
           {[1, 2].map((s) => (
-            <div key={s} className="flex-1 flex items-center gap-2">
-              <div className={`h-1.5 flex-1 rounded-full transition-colors ${s <= step ? 'bg-slate-900' : 'bg-slate-200'}`} />
+            <div key={s} className="flex-1">
+              <div className={`h-1.5 rounded-full transition-colors ${s <= step ? 'bg-slate-900' : 'bg-slate-200'}`} />
             </div>
           ))}
         </div>
@@ -125,52 +136,43 @@ export default function Onboarding() {
                   />
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Phone</label>
-                    <input
-                      type="tel"
-                      value={form.phone}
-                      onChange={(e) => update('phone', e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                      placeholder="+44 20 7946 0958"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
-                    <input
-                      type="email"
-                      value={form.email}
-                      onChange={(e) => update('email', e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                      placeholder="reception@clinic.co.uk"
-                    />
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Email</label>
+                  <input
+                    type="email"
+                    value={form.email}
+                    onChange={(e) => update('email', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent bg-slate-50"
+                    placeholder="reception@clinic.co.uk"
+                    readOnly={!!user?.email}
+                  />
+                  {user?.email && (
+                    <p className="text-xs text-slate-400 mt-1">From your account. Change it in Settings later.</p>
+                  )}
                 </div>
 
-                <div className="grid grid-cols-2 gap-4">
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Website</label>
-                    <input
-                      type="url"
-                      value={form.website}
-                      onChange={(e) => update('website', e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                      placeholder="https://clinic.co.uk"
-                    />
-                  </div>
-                  <div>
-                    <label className="block text-sm font-medium text-slate-700 mb-1">Practice Type</label>
-                    <select
-                      value={form.practice_type}
-                      onChange={(e) => update('practice_type', e.target.value)}
-                      className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent bg-white"
-                    >
-                      <option value="Private">Private</option>
-                      <option value="NHS">NHS</option>
-                      <option value="Mixed">Mixed</option>
-                    </select>
-                  </div>
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Website</label>
+                  <input
+                    type="url"
+                    value={form.website}
+                    onChange={(e) => update('website', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                    placeholder="https://clinic.co.uk"
+                  />
+                </div>
+
+                <div>
+                  <label className="block text-sm font-medium text-slate-700 mb-1">Practice Type</label>
+                  <select
+                    value={form.practice_type}
+                    onChange={(e) => update('practice_type', e.target.value)}
+                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent bg-white"
+                  >
+                    <option value="Private">Private</option>
+                    <option value="NHS">NHS</option>
+                    <option value="Mixed">Mixed (NHS & Private)</option>
+                  </select>
                 </div>
               </div>
 
@@ -189,7 +191,7 @@ export default function Onboarding() {
           {step === 2 && (
             <>
               <h2 className="text-xl font-semibold text-slate-900 mb-1">Opening Hours</h2>
-              <p className="text-slate-500 text-sm mb-6">Set your typical weekly schedule</p>
+              <p className="text-slate-500 text-sm mb-6">Set your typical weekly schedule — you can add holidays later</p>
 
               <div className="space-y-3">
                 {form.opening_hours.map((day, i) => (
@@ -203,7 +205,7 @@ export default function Onboarding() {
                       />
                       <span className="text-sm text-slate-700">{day.day}</span>
                     </label>
-                    {day.is_open && (
+                    {day.is_open ? (
                       <div className="flex items-center gap-2 flex-1">
                         <input
                           type="time"
@@ -219,8 +221,7 @@ export default function Onboarding() {
                           className="px-2 py-1.5 border border-slate-300 rounded-lg text-sm focus:outline-none focus:ring-2 focus:ring-slate-900"
                         />
                       </div>
-                    )}
-                    {!day.is_open && (
+                    ) : (
                       <span className="text-sm text-slate-400">Closed</span>
                     )}
                   </div>
@@ -242,7 +243,7 @@ export default function Onboarding() {
                   {loading ? (
                     <span className="flex items-center justify-center gap-2">
                       <span className="w-4 h-4 border-2 border-white/30 border-t-white rounded-full animate-spin" />
-                      Creating...
+                      Setting up...
                     </span>
                   ) : (
                     'Create Clinic'

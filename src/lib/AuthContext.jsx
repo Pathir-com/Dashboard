@@ -33,8 +33,8 @@ export const AuthProvider = ({ children }) => {
       password,
       options: {
         data: {
-          full_name: metadata.fullName,
-          clinic_name: metadata.clinicName,
+          full_name: metadata.fullName || null,
+          ...(metadata.clinicName ? { clinic_name: metadata.clinicName } : {}),
         },
       },
     });

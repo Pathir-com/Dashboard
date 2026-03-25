@@ -4,19 +4,15 @@ import { Navigate } from 'react-router-dom';
 
 export default function Login() {
   const { user, signIn, signUp, isLoadingAuth } = useAuth();
-  const [mode, setMode] = useState('login'); // 'login' | 'signup'
+  const [mode, setMode] = useState('login');
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
-  const [clinicName, setClinicName] = useState('');
   const [fullName, setFullName] = useState('');
   const [error, setError] = useState('');
   const [success, setSuccess] = useState('');
   const [loading, setLoading] = useState(false);
 
-  // Already logged in — redirect to dashboard (will check for practice and route accordingly)
-  if (user) {
-    return <Navigate to="/" replace />;
-  }
+  if (user) return <Navigate to="/" replace />;
 
   const handleSubmit = async (e) => {
     e.preventDefault();
@@ -29,12 +25,10 @@ export default function Login() {
         if (error) setError(error.message);
       } else {
         if (!fullName.trim()) { setError('Full name is required'); setLoading(false); return; }
-        if (!clinicName.trim()) { setError('Clinic name is required'); setLoading(false); return; }
-        const { data, error } = await signUp(email, password, { fullName, clinicName });
+        const { data, error } = await signUp(email, password, { fullName });
         if (error) {
           setError(error.message);
         } else if (data?.user && !data.session) {
-          // Email confirmation required
           setSuccess('Check your email for a confirmation link, then sign in.');
           setMode('login');
         }
@@ -49,13 +43,11 @@ export default function Login() {
   return (
     <div className="min-h-screen flex items-center justify-center bg-slate-50 px-4">
       <div className="w-full max-w-md">
-        {/* Logo / Brand */}
         <div className="text-center mb-8">
           <h1 className="text-3xl font-bold text-slate-900 tracking-tight">Pathir</h1>
           <p className="text-slate-500 mt-1">AI-Powered Dental Reception</p>
         </div>
 
-        {/* Card */}
         <div className="bg-white rounded-xl shadow-sm border border-slate-200 p-8">
           <h2 className="text-xl font-semibold text-slate-900 mb-6">
             {mode === 'login' ? 'Welcome back' : 'Create your account'}
@@ -63,30 +55,17 @@ export default function Login() {
 
           <form onSubmit={handleSubmit} className="space-y-4">
             {mode === 'signup' && (
-              <>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
-                  <input
-                    type="text"
-                    value={fullName}
-                    onChange={(e) => setFullName(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                    placeholder="Dr. Jane Smith"
-                    required
-                  />
-                </div>
-                <div>
-                  <label className="block text-sm font-medium text-slate-700 mb-1">Clinic Name</label>
-                  <input
-                    type="text"
-                    value={clinicName}
-                    onChange={(e) => setClinicName(e.target.value)}
-                    className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent"
-                    placeholder="Bright Smile Dental"
-                    required
-                  />
-                </div>
-              </>
+              <div>
+                <label className="block text-sm font-medium text-slate-700 mb-1">Full Name</label>
+                <input
+                  type="text"
+                  value={fullName}
+                  onChange={(e) => setFullName(e.target.value)}
+                  className="w-full px-3 py-2 border border-slate-300 rounded-lg focus:outline-none focus:ring-2 focus:ring-slate-900 focus:border-transparent"
+                  placeholder="Dr. Jane Smith"
+                  required
+                />
+              </div>
             )}
 
             <div>
@@ -140,7 +119,7 @@ export default function Login() {
 
           <div className="mt-6 text-center">
             <button
-              onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); }}
+              onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setSuccess(''); }}
               className="text-sm text-slate-500 hover:text-slate-900 transition-colors"
             >
               {mode === 'login'
