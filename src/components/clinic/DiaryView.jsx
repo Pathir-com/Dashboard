@@ -19,7 +19,7 @@
  *   2026-03-10: Initial creation — enquiry-based appointments only.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useRef, useCallback } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
@@ -250,6 +250,20 @@ export default function DiaryView({ enquiries, practice }) {
   // ---- Working hours for a practitioner on the selected day ----
   const getDayKey = (day) => format(day, 'EEEE').toLowerCase();
 
+  // ---- Horizontal scroll for practitioner columns ----
+  const COL_WIDTH = 220; // px per practitioner column
+  const VISIBLE_COLS = 4; // max visible at once on desktop
+  const scrollContainerRef = useRef(null);
+
+  const scrollColumns = useCallback((direction) => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const pageWidth = VISIBLE_COLS * COL_WIDTH;
+    el.scrollBy({ left: direction * pageWidth, behavior: 'smooth' });
+  }, []);
+
+  const canScroll = practitioners.length > VISIBLE_COLS;
+
   return (
     <div className="flex h-screen overflow-hidden">
       {/* ===== Left sidebar: mini calendar + sidebar lists ===== */}
@@ -360,12 +374,32 @@ export default function DiaryView({ enquiries, practice }) {
               <ChevronRight className="w-4 h-4" />
             </button>
           </div>
+          <div className="flex items-center gap-2">
+            {canScroll && (
+              <>
+                <button
+                  onClick={() => scrollColumns(-1)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 border border-slate-200 transition-colors"
+                  title="Scroll practitioners left"
+                >
+                  <ChevronLeft className="w-4 h-4" />
+                </button>
+                <button
+                  onClick={() => scrollColumns(1)}
+                  className="p-1.5 rounded-lg text-slate-400 hover:text-slate-700 hover:bg-slate-100 border border-slate-200 transition-colors"
+                  title="Scroll practitioners right"
+                >
+                  <ChevronRight className="w-4 h-4" />
+                </button>
+              </>
+            )}
           <button
             onClick={() => setSelectedDay(new Date())}
             className="text-xs text-slate-500 hover:text-slate-900 border border-slate-200 rounded-lg px-3 py-1.5 transition-colors"
           >
             Today
           </button>
+          </div>
         </div>
 
         {/* Timetable grid */}
@@ -382,8 +416,12 @@ export default function DiaryView({ enquiries, practice }) {
               ))}
             </div>
 
-            {/* Practitioner columns */}
-            <div className="flex-1 flex">
+            {/* Practitioner columns — horizontally scrollable when >4 practitioners */}
+            <div
+              ref={scrollContainerRef}
+              className="flex-1 flex overflow-x-auto"
+              style={{ scrollSnapType: 'x mandatory' }}
+            >
               {practitioners.map((prac, pIdx) => {
                 // Filter blocks that belong to this practitioner
                 const pracBlocks = dayBlocks.filter(b => b.practitionerId === prac.id);
@@ -396,7 +434,11 @@ export default function DiaryView({ enquiries, practice }) {
                 const workEnd = wh ? toMinutes(wh.end) : 18 * 60;
 
                 return (
-                  <div key={prac.id} className="flex-1 border-r border-slate-100 last:border-r-0 flex flex-col">
+                  <div
+                    key={prac.id}
+                    className={`border-r border-slate-100 last:border-r-0 flex flex-col shrink-0 ${practitioners.length <= VISIBLE_COLS ? 'flex-1' : ''}`}
+                    style={practitioners.length > VISIBLE_COLS ? { minWidth: COL_WIDTH, width: COL_WIDTH, scrollSnapAlign: 'start' } : undefined}
+                  >
                     {/* Column header */}
                     <div className="h-10 bg-white border-b border-slate-100 flex items-center justify-center shrink-0">
                       <div className="flex items-center gap-1.5">
