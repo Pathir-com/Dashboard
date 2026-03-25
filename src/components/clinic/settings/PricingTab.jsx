@@ -1,7 +1,7 @@
 import React, { useState } from 'react';
 import { Input } from '@/components/ui/input';
 import { Button } from '@/components/ui/button';
-import { Plus, Trash2, ChevronDown } from 'lucide-react';
+import { Plus, Trash2 } from 'lucide-react';
 
 function generateId() {
   return Math.random().toString(36).slice(2, 9);
@@ -10,13 +10,13 @@ function generateId() {
 const COMMON_CATEGORIES = ['Preventive', 'Restorative', 'Cosmetic', 'Orthodontics', 'Oral Surgery', 'Periodontics', 'Endodontics', 'Implants', 'Whitening', 'Other'];
 
 export default function PricingTab({ priceList, setPriceList }) {
-  const [newRow, setNewRow] = useState({ category: '', service_name: '', price: '', notes: '' });
+  const [newRow, setNewRow] = useState({ category: '', service_name: '', price: '', notes: '', is_from_price: false });
   const [filter, setFilter] = useState('');
 
   const addRow = () => {
     if (!newRow.service_name) return;
     setPriceList(prev => [...prev, { ...newRow, id: generateId(), price: parseFloat(newRow.price) || 0 }]);
-    setNewRow({ category: '', service_name: '', price: '', notes: '' });
+    setNewRow({ category: '', service_name: '', price: '', notes: '', is_from_price: false });
   };
 
   const updateRow = (id, field, value) => {
@@ -34,7 +34,7 @@ export default function PricingTab({ priceList, setPriceList }) {
     <div className="space-y-5">
       <div>
         <h2 className="text-sm font-semibold text-slate-900">Price List</h2>
-        <p className="text-xs text-slate-400">Manage your services and prices. This helps the AI quote patients accurately.</p>
+        <p className="text-xs text-slate-400">Manage your services and prices. The AI quotes these to patients. Tick "From" for range pricing.</p>
       </div>
 
       {/* Filter by category */}
@@ -62,9 +62,10 @@ export default function PricingTab({ priceList, setPriceList }) {
       <div className="bg-white rounded-xl border border-slate-100 overflow-hidden">
         {/* Header */}
         <div className="grid grid-cols-12 gap-2 px-4 py-2.5 bg-slate-50 border-b border-slate-100 text-xs font-semibold text-slate-500">
-          <div className="col-span-3">Category</div>
+          <div className="col-span-2">Category</div>
           <div className="col-span-3">Service</div>
           <div className="col-span-2">Price (£)</div>
+          <div className="col-span-1 text-center">From</div>
           <div className="col-span-3">Notes</div>
           <div className="col-span-1"></div>
         </div>
@@ -75,7 +76,7 @@ export default function PricingTab({ priceList, setPriceList }) {
         ) : (
           filtered.map(row => (
             <div key={row.id} className="grid grid-cols-12 gap-2 px-4 py-2 items-center border-b border-slate-50 last:border-b-0 hover:bg-slate-50/50">
-              <div className="col-span-3">
+              <div className="col-span-2">
                 <Input
                   value={row.category}
                   onChange={e => updateRow(row.id, 'category', e.target.value)}
@@ -88,7 +89,25 @@ export default function PricingTab({ priceList, setPriceList }) {
                 <Input value={row.service_name} onChange={e => updateRow(row.id, 'service_name', e.target.value)} placeholder="Service name" className="h-8 text-xs" />
               </div>
               <div className="col-span-2">
-                <Input value={row.price} onChange={e => updateRow(row.id, 'price', e.target.value)} placeholder="0.00" type="number" className="h-8 text-xs" />
+                <div className="relative">
+                  {row.is_from_price && <span className="absolute left-2 top-1/2 -translate-y-1/2 text-xs text-slate-400">from</span>}
+                  <Input
+                    value={row.price}
+                    onChange={e => updateRow(row.id, 'price', e.target.value)}
+                    placeholder="0.00"
+                    type="number"
+                    className={`h-8 text-xs ${row.is_from_price ? 'pl-10' : ''}`}
+                  />
+                </div>
+              </div>
+              <div className="col-span-1 flex justify-center">
+                <input
+                  type="checkbox"
+                  checked={!!row.is_from_price}
+                  onChange={e => updateRow(row.id, 'is_from_price', e.target.checked)}
+                  className="rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+                  title="Pricing starts from this amount"
+                />
               </div>
               <div className="col-span-3">
                 <Input value={row.notes} onChange={e => updateRow(row.id, 'notes', e.target.value)} placeholder="When to offer..." className="h-8 text-xs" />
@@ -104,7 +123,7 @@ export default function PricingTab({ priceList, setPriceList }) {
 
         {/* Add row */}
         <div className="grid grid-cols-12 gap-2 px-4 py-3 bg-slate-50/50 border-t border-slate-100 items-center">
-          <div className="col-span-3">
+          <div className="col-span-2">
             <Input
               value={newRow.category}
               onChange={e => setNewRow({ ...newRow, category: e.target.value })}
@@ -118,6 +137,15 @@ export default function PricingTab({ priceList, setPriceList }) {
           </div>
           <div className="col-span-2">
             <Input value={newRow.price} onChange={e => setNewRow({ ...newRow, price: e.target.value })} placeholder="0.00" type="number" className="h-8 text-xs" />
+          </div>
+          <div className="col-span-1 flex justify-center">
+            <input
+              type="checkbox"
+              checked={!!newRow.is_from_price}
+              onChange={e => setNewRow({ ...newRow, is_from_price: e.target.checked })}
+              className="rounded border-slate-300 text-slate-900 focus:ring-slate-900"
+              title="Pricing starts from this amount"
+            />
           </div>
           <div className="col-span-3">
             <Input value={newRow.notes} onChange={e => setNewRow({ ...newRow, notes: e.target.value })} onKeyDown={e => { if (e.key === 'Enter') addRow(); }} placeholder="When to offer..." className="h-8 text-xs" />

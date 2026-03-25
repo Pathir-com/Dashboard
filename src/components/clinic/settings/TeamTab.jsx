@@ -20,9 +20,16 @@ function PractitionerCard({ p, onChange, onDelete, isOpen, onToggle }) {
   const [serviceInput, setServiceInput] = useState('');
 
   const addService = () => {
-    const s = serviceInput.trim();
-    if (!s) return;
-    onChange({ ...p, services: [...(p.services || []), s] });
+    const raw = serviceInput.trim();
+    if (!raw) return;
+    // Split on commas so "whitening, implants, check-up" → three separate services
+    const newServices = raw.split(',').map(s => s.trim()).filter(s => s.length > 0);
+    if (newServices.length === 0) return;
+    const existing = p.services || [];
+    // Deduplicate (case-insensitive)
+    const existingLower = new Set(existing.map(s => s.toLowerCase()));
+    const unique = newServices.filter(s => !existingLower.has(s.toLowerCase()));
+    onChange({ ...p, services: [...existing, ...unique] });
     setServiceInput('');
   };
 

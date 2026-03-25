@@ -152,8 +152,8 @@ function buildPracticeBase(practice: any) {
       name: `${p.title || ""} ${p.name}`.trim(), credentials: p.credentials || null,
       bio: (p.bio || "").slice(0, 150) + ((p.bio || "").length > 150 ? "..." : ""), services: p.services || [],
     })),
-    prices: (practice.price_list || []).map((p: { service_name: string; price: number }) => ({
-      service: p.service_name, price: `£${p.price}`,
+    prices: (practice.price_list || []).map((p: { service_name: string; price: number; is_from_price?: boolean }) => ({
+      service: p.service_name, price: p.is_from_price ? `from £${p.price}` : `£${p.price}`,
     })),
     email_enabled: !!integrations.email_enabled, stripe_connected: !!integrations.stripe_connected,
     current_datetime: getUKDateTime(),

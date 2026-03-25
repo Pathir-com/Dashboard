@@ -98,8 +98,12 @@ export default function IntegrationsTab({
       return;
     }
     if (key === 'phone_enabled') {
-      if (!hasNumber) { await onAssignNumber(); return; }
       openPanel('phone_enabled');
+      return;
+    }
+    if (key === 'sms_enabled') {
+      if (!hasNumber) { openPanel('phone_enabled'); toast.info('Assign a phone number first — SMS is included automatically.'); return; }
+      setIntegrations({ ...integrations, sms_enabled: !integrations.sms_enabled });
       return;
     }
     setIntegrations({ ...integrations, [key]: !integrations[key] });
@@ -332,6 +336,28 @@ export default function IntegrationsTab({
             </button>
 
             {/* ── Phone Agent ── */}
+            {expanded === 'phone_enabled' && !twilioNumber && (
+              <div className="space-y-3 max-w-sm">
+                <p className="text-sm font-semibold text-slate-900 mb-2">Phone Agent</p>
+                {isAssigningNumber ? (
+                  <div className="flex items-center gap-3 p-4 rounded-lg bg-blue-50 border border-blue-100">
+                    <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+                    <div>
+                      <p className="text-sm font-medium text-blue-900">Setting up your phone number...</p>
+                      <p className="text-xs text-blue-600 mt-0.5">This takes a few seconds. We're assigning a local number for your area.</p>
+                    </div>
+                  </div>
+                ) : (
+                  <>
+                    <p className="text-xs text-slate-500">Click below to get a dedicated AI phone number for your practice. Patients call this number and Poppy answers instantly, 24/7.</p>
+                    <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white" onClick={onAssignNumber}>
+                      Assign Phone Number
+                    </Button>
+                    <p className="text-xs text-slate-400">SMS confirmations and reminders are included automatically.</p>
+                  </>
+                )}
+              </div>
+            )}
             {expanded === 'phone_enabled' && twilioNumber && (
               <div className="space-y-3 max-w-sm">
                 <div className="flex items-center gap-2 mb-2">
@@ -382,6 +408,18 @@ export default function IntegrationsTab({
             )}
 
             {/* ── Web Chat embed ── */}
+            {expanded === 'web_chat_enabled' && !practice?.elevenlabs_agent_id && (
+              <div className="space-y-3 max-w-sm">
+                <p className="text-sm font-semibold text-slate-900 mb-2">Web Chat</p>
+                <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-100">
+                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
+                  <div>
+                    <p className="text-xs font-medium text-amber-800">AI agent is being set up</p>
+                    <p className="text-xs text-amber-600 mt-0.5">The web chat widget will be available once your AI agent is ready. This usually takes a few seconds after creating your clinic. Try refreshing the page.</p>
+                  </div>
+                </div>
+              </div>
+            )}
             {expanded === 'web_chat_enabled' && practice?.elevenlabs_agent_id && (() => {
               const snippet = `<script\n  src="https://amxcposgqlmgapzoopze.supabase.co/storage/v1/object/public/widget/pathir-chat.js"\n  data-agent-id="${practice.elevenlabs_agent_id}"\n  data-token-url="https://amxcposgqlmgapzoopze.supabase.co/functions/v1/chat-token"\n  data-title="${practice.name || 'Chat with us'}"\n  data-subtitle="Ask Poppy anything"\n  data-accent="#3072ff"\n></script>`;
               return (
