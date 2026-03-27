@@ -70,8 +70,8 @@ export default function IntegrationsTab({
 
   /* ── Connected status ── */
   const isConnected = {
-    phone_enabled: hasNumber && integrations.phone_enabled,
-    sms_enabled: hasNumber && integrations.sms_enabled !== false,
+    phone_enabled: hasNumber,
+    sms_enabled: hasNumber,
     web_chat_enabled: !!practice?.elevenlabs_agent_id,
     email_enabled: !!integrations.email_enabled && !!integrations.email_verified,
     facebook_enabled: !!integrations.facebook_page_id,
@@ -98,12 +98,8 @@ export default function IntegrationsTab({
       return;
     }
     if (key === 'phone_enabled') {
+      if (!hasNumber) { await onAssignNumber(); return; }
       openPanel('phone_enabled');
-      return;
-    }
-    if (key === 'sms_enabled') {
-      if (!hasNumber) { openPanel('phone_enabled'); toast.info('Assign a phone number first — SMS is included automatically.'); return; }
-      setIntegrations({ ...integrations, sms_enabled: !integrations.sms_enabled });
       return;
     }
     setIntegrations({ ...integrations, [key]: !integrations[key] });
@@ -252,14 +248,10 @@ export default function IntegrationsTab({
   async function handlePhoneDisconnect() {
     setIsTogglingPhone(true);
     try {
-      const updated = { ...integrations, phone_enabled: false };
-      const { error } = await supabase.from('practices').update({ integrations: updated }).eq('id', practice?.id);
-      if (error) throw error;
-      setIntegrations(updated);
+      await togglePhoneAgent(practice.id, false);
+      setIntegrations({ ...integrations, phone_enabled: false });
       toast.success('Phone agent disconnected');
       setExpanded(null);
-      // Update Twilio routing in the background (non-blocking)
-      togglePhoneAgent(practice.id, false).catch(err => console.error('Twilio routing update failed:', err));
     } catch (err) {
       console.error(err);
       toast.error('Failed to disconnect phone agent');
@@ -271,14 +263,10 @@ export default function IntegrationsTab({
   async function handlePhoneReconnect() {
     setIsTogglingPhone(true);
     try {
-      const updated = { ...integrations, phone_enabled: true };
-      const { error } = await supabase.from('practices').update({ integrations: updated }).eq('id', practice?.id);
-      if (error) throw error;
-      setIntegrations(updated);
+      await togglePhoneAgent(practice.id, true);
+      setIntegrations({ ...integrations, phone_enabled: true });
       toast.success('Phone agent reconnected');
       setExpanded(null);
-      // Update Twilio routing in the background (non-blocking)
-      togglePhoneAgent(practice.id, true).catch(err => console.error('Twilio routing update failed:', err));
     } catch (err) {
       console.error(err);
       toast.error('Failed to reconnect phone agent');
@@ -297,22 +285,30 @@ export default function IntegrationsTab({
   /* ── Render a card ── */
   function renderCard({ key, icon: Icon, iconColor, bgColor, borderColor, label, description }, onClick) {
     const active = isConnected[key] || expanded === key;
+    const isPhoneLoading = key === 'phone_enabled' && isAssigningNumber;
     return (
       <button
         key={key}
         type="button"
         onClick={() => onClick(key)}
-        disabled={key === 'phone_enabled' && isAssigningNumber}
+        disabled={isPhoneLoading}
         className={`relative flex flex-col items-start rounded-xl border p-4 text-left transition-all ${
           active ? 'bg-white border-slate-300 shadow-sm' : 'bg-slate-50/50 border-slate-100 hover:bg-white hover:border-slate-200'
-        }`}
+        } ${isPhoneLoading ? 'pointer-events-none' : ''}`}
       >
         <div className={`w-10 h-10 rounded-xl ${bgColor} border ${borderColor} flex items-center justify-center mb-3`}>
-          <Icon className={`w-5 h-5 ${iconColor}`} />
+          {isPhoneLoading
+            ? <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
+            : <Icon className={`w-5 h-5 ${iconColor}`} />
+          }
         </div>
-        <p className={`text-sm font-semibold leading-tight ${active ? 'text-slate-900' : 'text-slate-500'}`}>{label}</p>
-        <p className="text-[11px] text-slate-400 mt-1 leading-snug line-clamp-2">{description}</p>
-        <div className={`absolute top-3 right-3 w-2 h-2 rounded-full ${dotColor(key)}`} />
+        <p className={`text-sm font-semibold leading-tight ${active ? 'text-slate-900' : 'text-slate-500'}`}>
+          {isPhoneLoading ? 'Setting up...' : label}
+        </p>
+        <p className="text-[11px] text-slate-400 mt-1 leading-snug line-clamp-2">
+          {isPhoneLoading ? 'Assigning a local number for your area' : description}
+        </p>
+        <div className={`absolute top-3 right-3 w-2 h-2 rounded-full ${isPhoneLoading ? 'bg-blue-400 animate-pulse' : dotColor(key)}`} />
       </button>
     );
   }
@@ -336,28 +332,6 @@ export default function IntegrationsTab({
             </button>
 
             {/* ── Phone Agent ── */}
-            {expanded === 'phone_enabled' && !twilioNumber && (
-              <div className="space-y-3 max-w-sm">
-                <p className="text-sm font-semibold text-slate-900 mb-2">Phone Agent</p>
-                {isAssigningNumber ? (
-                  <div className="flex items-center gap-3 p-4 rounded-lg bg-blue-50 border border-blue-100">
-                    <Loader2 className="w-5 h-5 animate-spin text-blue-600" />
-                    <div>
-                      <p className="text-sm font-medium text-blue-900">Setting up your phone number...</p>
-                      <p className="text-xs text-blue-600 mt-0.5">This takes a few seconds. We're assigning a local number for your area.</p>
-                    </div>
-                  </div>
-                ) : (
-                  <>
-                    <p className="text-xs text-slate-500">Click below to get a dedicated AI phone number for your practice. Patients call this number and Poppy answers instantly, 24/7.</p>
-                    <Button size="sm" className="h-8 text-xs bg-blue-600 hover:bg-blue-700 text-white" onClick={onAssignNumber}>
-                      Assign Phone Number
-                    </Button>
-                    <p className="text-xs text-slate-400">SMS confirmations and reminders are included automatically.</p>
-                  </>
-                )}
-              </div>
-            )}
             {expanded === 'phone_enabled' && twilioNumber && (
               <div className="space-y-3 max-w-sm">
                 <div className="flex items-center gap-2 mb-2">
@@ -372,7 +346,7 @@ export default function IntegrationsTab({
                 <div className="space-y-1.5">
                   <Label className="text-xs text-slate-500">Your AI phone number</Label>
                   <div className="flex items-center gap-1.5">
-                    <Input readOnly value={twilioNumber} className={`font-mono text-xs h-8 bg-slate-50 ${integrations.phone_enabled ? 'text-slate-700' : 'text-slate-400'}`} />
+                    <Input readOnly value={twilioNumber} className="font-mono text-xs h-8 bg-slate-50 text-slate-700" />
                     <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => {
                       navigator.clipboard.writeText(twilioNumber);
                       setPhoneCopied(true);
@@ -408,18 +382,6 @@ export default function IntegrationsTab({
             )}
 
             {/* ── Web Chat embed ── */}
-            {expanded === 'web_chat_enabled' && !practice?.elevenlabs_agent_id && (
-              <div className="space-y-3 max-w-sm">
-                <p className="text-sm font-semibold text-slate-900 mb-2">Web Chat</p>
-                <div className="flex items-start gap-2 p-3 rounded-lg bg-amber-50 border border-amber-100">
-                  <AlertCircle className="w-4 h-4 text-amber-600 shrink-0 mt-0.5" />
-                  <div>
-                    <p className="text-xs font-medium text-amber-800">AI agent is being set up</p>
-                    <p className="text-xs text-amber-600 mt-0.5">The web chat widget will be available once your AI agent is ready. This usually takes a few seconds after creating your clinic. Try refreshing the page.</p>
-                  </div>
-                </div>
-              </div>
-            )}
             {expanded === 'web_chat_enabled' && practice?.elevenlabs_agent_id && (() => {
               const snippet = `<script\n  src="https://amxcposgqlmgapzoopze.supabase.co/storage/v1/object/public/widget/pathir-chat.js"\n  data-agent-id="${practice.elevenlabs_agent_id}"\n  data-token-url="https://amxcposgqlmgapzoopze.supabase.co/functions/v1/chat-token"\n  data-title="${practice.name || 'Chat with us'}"\n  data-subtitle="Ask Poppy anything"\n  data-accent="#3072ff"\n></script>`;
               return (
@@ -604,7 +566,7 @@ export default function IntegrationsTab({
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {CHANNELS.map(ch => renderCard(ch, handleChannelClick))}
         </div>
-        {['phone_enabled', 'email_enabled', 'web_chat_enabled', 'facebook_enabled', 'instagram_enabled'].includes(expanded) && renderPanel()}
+        {['phone_enabled', 'email_enabled', 'web_chat_enabled'].includes(expanded) && renderPanel()}
       </section>
 
       {/* Payments & Services */}
@@ -622,7 +584,7 @@ export default function IntegrationsTab({
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {PMS_SYSTEMS.map(pms => renderCard(pms, openPanel))}
         </div>
-        {['pms_pearl', 'pms_aerona'].includes(expanded) && renderPanel()}
+        {['pms_pearl', 'pms_aerona', 'facebook_enabled', 'instagram_enabled'].includes(expanded) && renderPanel()}
       </section>
     </div>
   );

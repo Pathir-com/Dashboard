@@ -13,13 +13,14 @@
  *   - src/pages/Clinic.jsx (rendered when currentView === 'diary')
  *
  * Changes:
+ *   2026-03-27: Lowered VISIBLE_COLS to 2 — diary scrolls horizontally at 3+ practitioners.
  *   2026-03-16: Removed pending state — bookings go straight to confirmed.
  *   2026-03-11: Upgraded to read from appointments + appointment_requests tables,
  *               duration-proportional blocks.
  *   2026-03-10: Initial creation — enquiry-based appointments only.
  */
 
-import React, { useState, useMemo, useRef, useCallback } from 'react';
+import React, { useState, useMemo, useRef, useCallback, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import {
   format, startOfMonth, endOfMonth, eachDayOfInterval,
@@ -252,17 +253,28 @@ export default function DiaryView({ enquiries, practice }) {
 
   // ---- Horizontal scroll for practitioner columns ----
   const COL_WIDTH = 220; // px per practitioner column
-  const VISIBLE_COLS = 4; // max visible at once on desktop
+  const VISIBLE_COLS = 2; // scroll kicks in at 3+ practitioners
   const scrollContainerRef = useRef(null);
+  const [hasOverflow, setHasOverflow] = useState(false);
 
   const scrollColumns = useCallback((direction) => {
     const el = scrollContainerRef.current;
     if (!el) return;
-    const pageWidth = VISIBLE_COLS * COL_WIDTH;
-    el.scrollBy({ left: direction * pageWidth, behavior: 'smooth' });
+    el.scrollBy({ left: direction * el.clientWidth, behavior: 'smooth' });
   }, []);
 
   const canScroll = practitioners.length > VISIBLE_COLS;
+
+  // Detect actual horizontal overflow so scroll buttons only show when needed
+  useEffect(() => {
+    const el = scrollContainerRef.current;
+    if (!el) return;
+    const check = () => setHasOverflow(el.scrollWidth > el.clientWidth + 1);
+    check();
+    const ro = new ResizeObserver(check);
+    ro.observe(el);
+    return () => ro.disconnect();
+  }, [practitioners.length]);
 
   return (
     <div className="flex h-screen overflow-hidden">
@@ -375,7 +387,7 @@ export default function DiaryView({ enquiries, practice }) {
             </button>
           </div>
           <div className="flex items-center gap-2">
-            {canScroll && (
+            {canScroll && hasOverflow && (
               <>
                 <button
                   onClick={() => scrollColumns(-1)}
@@ -437,7 +449,10 @@ export default function DiaryView({ enquiries, practice }) {
                   <div
                     key={prac.id}
                     className={`border-r border-slate-100 last:border-r-0 flex flex-col shrink-0 ${practitioners.length <= VISIBLE_COLS ? 'flex-1' : ''}`}
-                    style={practitioners.length > VISIBLE_COLS ? { minWidth: COL_WIDTH, width: COL_WIDTH, scrollSnapAlign: 'start' } : undefined}
+                    style={practitioners.length > VISIBLE_COLS
+                      ? { minWidth: COL_WIDTH, flex: '1 0 auto', scrollSnapAlign: 'start' }
+                      : { minWidth: COL_WIDTH }
+                    }
                   >
                     {/* Column header */}
                     <div className="h-10 bg-white border-b border-slate-100 flex items-center justify-center shrink-0">
