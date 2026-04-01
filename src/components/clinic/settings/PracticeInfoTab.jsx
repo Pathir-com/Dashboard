@@ -14,10 +14,16 @@ export default function PracticeInfoTab({ usps, setUsps, practicePlan, setPracti
     if (!file) return;
     if (file.type !== 'application/pdf') { toast.error('Please upload a PDF file'); return; }
     setUploading(true);
-    const { file_url } = await base44.integrations.Core.UploadFile({ file });
-    setFinanceDocUrl(file_url);
-    setUploading(false);
-    toast.success('Finance document uploaded');
+    try {
+      const { file_url } = await base44.integrations.Core.UploadFile({ file });
+      setFinanceDocUrl(file_url);
+      toast.success('Finance document uploaded');
+    } catch (err) {
+      console.error('Upload failed:', err);
+      toast.error(err.message || 'Failed to upload document');
+    } finally {
+      setUploading(false);
+    }
   };
 
   return (

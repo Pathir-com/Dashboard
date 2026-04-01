@@ -27,8 +27,8 @@ const TABS = [
   { id: 'integrations', label: 'Integrations',   icon: Plug },
 ];
 
-export default function ClinicSettings({ practice, onUpdate }) {
-  const [activeTab, setActiveTab] = useState('clinic');
+export default function ClinicSettings({ practice, onUpdate, activeTab, onTabChange }) {
+  const setActiveTab = onTabChange;
   const [isSaving, setIsSaving] = useState(false);
 
   // Tab: Clinic Details
@@ -178,8 +178,10 @@ export default function ClinicSettings({ practice, onUpdate }) {
                   const result = await assignTwilioNumber(practice.id);
                   onUpdate({ ...practice, twilio_phone_number: result.phoneNumber });
                   toast.success(`Voice AI enabled: ${result.phoneNumber}`);
+                  return result;
                 } catch (err) {
                   toast.error(err.message || 'Failed to assign number');
+                  return null;
                 } finally {
                   setIsAssigningNumber(false);
                 }

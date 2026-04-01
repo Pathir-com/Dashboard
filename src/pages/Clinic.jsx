@@ -22,6 +22,7 @@ import EmailFollowUp from '../components/clinic/EmailFollowUp';
 
 export default function Clinic() {
   const [currentView, setCurrentView] = useState('enquiries');
+  const [settingsTab, setSettingsTab] = useState('clinic');
   const [expandedId, setExpandedId] = useState(null);
   const [dateRange, setDateRange] = useState({ start: new Date(), end: new Date() });
   const [calendarOpen, setCalendarOpen] = useState(false);
@@ -264,6 +265,8 @@ export default function Clinic() {
           <ClinicSettings
             practice={selectedPractice}
             onUpdate={(updated) => setSelectedPractice(updated)}
+            activeTab={settingsTab}
+            onTabChange={setSettingsTab}
           />
         ) : currentView === 'diary' ? (
           <DiaryView enquiries={enquiries} practice={selectedPractice} />

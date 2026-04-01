@@ -98,7 +98,14 @@ export default function IntegrationsTab({
       return;
     }
     if (key === 'phone_enabled') {
-      if (!hasNumber) { await onAssignNumber(); return; }
+      if (!hasNumber) {
+        const result = await onAssignNumber();
+        if (result) {
+          setIntegrations(prev => ({ ...prev, phone_enabled: true }));
+          setExpanded('phone_enabled');
+        }
+        return;
+      }
       openPanel('phone_enabled');
       return;
     }
@@ -286,15 +293,17 @@ export default function IntegrationsTab({
   function renderCard({ key, icon: Icon, iconColor, bgColor, borderColor, label, description }, onClick) {
     const active = isConnected[key] || expanded === key;
     const isPhoneLoading = key === 'phone_enabled' && isAssigningNumber;
+    const isChatLocked = key === 'web_chat_enabled' && !practice?.elevenlabs_agent_id;
+    const isDisabled = isPhoneLoading || isChatLocked;
     return (
       <button
         key={key}
         type="button"
-        onClick={() => onClick(key)}
-        disabled={isPhoneLoading}
+        onClick={() => !isDisabled && onClick(key)}
+        disabled={isDisabled}
         className={`relative flex flex-col items-start rounded-xl border p-4 text-left transition-all ${
           active ? 'bg-white border-slate-300 shadow-sm' : 'bg-slate-50/50 border-slate-100 hover:bg-white hover:border-slate-200'
-        } ${isPhoneLoading ? 'pointer-events-none' : ''}`}
+        } ${isDisabled ? 'opacity-50 cursor-not-allowed' : ''}`}
       >
         <div className={`w-10 h-10 rounded-xl ${bgColor} border ${borderColor} flex items-center justify-center mb-3`}>
           {isPhoneLoading
@@ -306,7 +315,7 @@ export default function IntegrationsTab({
           {isPhoneLoading ? 'Setting up...' : label}
         </p>
         <p className="text-[11px] text-slate-400 mt-1 leading-snug line-clamp-2">
-          {isPhoneLoading ? 'Assigning a local number for your area' : description}
+          {isPhoneLoading ? 'Assigning a local number for your area' : isChatLocked ? 'Available once your AI agent is provisioned.' : description}
         </p>
         <div className={`absolute top-3 right-3 w-2 h-2 rounded-full ${isPhoneLoading ? 'bg-blue-400 animate-pulse' : dotColor(key)}`} />
       </button>
@@ -566,7 +575,7 @@ export default function IntegrationsTab({
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {CHANNELS.map(ch => renderCard(ch, handleChannelClick))}
         </div>
-        {['phone_enabled', 'email_enabled', 'web_chat_enabled'].includes(expanded) && renderPanel()}
+        {['phone_enabled', 'email_enabled', 'web_chat_enabled', 'facebook_enabled', 'instagram_enabled'].includes(expanded) && renderPanel()}
       </section>
 
       {/* Payments & Services */}
@@ -584,7 +593,7 @@ export default function IntegrationsTab({
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
           {PMS_SYSTEMS.map(pms => renderCard(pms, openPanel))}
         </div>
-        {['pms_pearl', 'pms_aerona', 'facebook_enabled', 'instagram_enabled'].includes(expanded) && renderPanel()}
+        {['pms_pearl', 'pms_aerona'].includes(expanded) && renderPanel()}
       </section>
     </div>
   );

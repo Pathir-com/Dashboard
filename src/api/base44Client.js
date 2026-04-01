@@ -4,6 +4,8 @@
  * that the rest of the app expects.
  */
 
+import { supabase } from '@/lib/supabase';
+
 const STORAGE_KEY = 'pathir_live_v3';
 
 function loadStore() {
@@ -565,9 +567,13 @@ export const base44 = {
         console.log('[Pathir] Email stub:', params);
         return Promise.resolve({ success: true });
       },
-      UploadFile: ({ file }) => {
-        const url = URL.createObjectURL(file);
-        return Promise.resolve({ file_url: url });
+      UploadFile: async ({ file }) => {
+        const ext = file.name.split('.').pop() || 'pdf';
+        const path = `uploads/${Date.now()}_${Math.random().toString(36).slice(2, 8)}.${ext}`;
+        const { error } = await supabase.storage.from('documents').upload(path, file, { contentType: file.type, upsert: false });
+        if (error) throw new Error(error.message || 'Upload failed');
+        const { data: { publicUrl } } = supabase.storage.from('documents').getPublicUrl(path);
+        return { file_url: publicUrl };
       },
     },
   },
