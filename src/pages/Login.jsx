@@ -4,7 +4,9 @@ import { Navigate } from 'react-router-dom';
 
 export default function Login() {
   const { user, signIn, signUp, isLoadingAuth } = useAuth();
+  // TEMPORARY: signups disabled — remove this line and restore 'login' default to re-enable
   const [mode, setMode] = useState('login');
+  const signupsDisabled = true;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
@@ -24,6 +26,7 @@ export default function Login() {
         const { error } = await signIn(email, password);
         if (error) setError(error.message);
       } else {
+        if (signupsDisabled) { setError('Sign-ups are temporarily closed. Please check back soon.'); setLoading(false); return; }
         if (!fullName.trim()) { setError('Full name is required'); setLoading(false); return; }
         const { data, error } = await signUp(email, password, { fullName });
         if (error) {
@@ -117,16 +120,18 @@ export default function Login() {
             </button>
           </form>
 
-          <div className="mt-6 text-center">
-            <button
-              onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setSuccess(''); }}
-              className="text-sm text-slate-500 hover:text-slate-900 transition-colors"
-            >
-              {mode === 'login'
-                ? "Don't have an account? Sign up"
-                : 'Already have an account? Sign in'}
-            </button>
-          </div>
+          {!signupsDisabled && (
+            <div className="mt-6 text-center">
+              <button
+                onClick={() => { setMode(mode === 'login' ? 'signup' : 'login'); setError(''); setSuccess(''); }}
+                className="text-sm text-slate-500 hover:text-slate-900 transition-colors"
+              >
+                {mode === 'login'
+                  ? "Don't have an account? Sign up"
+                  : 'Already have an account? Sign in'}
+              </button>
+            </div>
+          )}
         </div>
 
         <p className="text-center text-xs text-slate-400 mt-6">
