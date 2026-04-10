@@ -11,6 +11,7 @@
  *   - supabase/functions/chatbase-action/index.ts
  *   - supabase/functions/vapi-webhook/index.ts
  *   - supabase/functions/twilio-sms-webhook/index.ts
+ *   - supabase/functions/meta-webhook/index.ts
  *
  * Changes:
  *   2026-03-09: Ported from api/_lib/match-contact.js to Deno Edge Function
@@ -24,6 +25,8 @@ interface ContactInput {
   phone?: string;
   email?: string;
   source?: string;
+  facebookPsid?: string;
+  instagramId?: string;
 }
 
 /** Normalize a UK phone number to E.164 format (+44...) */
@@ -46,11 +49,50 @@ export function normalizePhone(raw: string): string {
  */
 export async function findOrCreateContact(
   adminClient: SupabaseClient,
-  { practiceId, name, phone: rawPhone, email, source }: ContactInput,
+  { practiceId, name, phone: rawPhone, email, source, facebookPsid, instagramId }: ContactInput,
 ) {
   const phone = rawPhone ? normalizePhone(rawPhone) : undefined;
 
-  // 1. Try matching by phone
+  // 1. Try matching by Meta sender ID (fastest for Meta channels)
+  if (facebookPsid) {
+    const { data: byFb } = await adminClient
+      .from("contacts")
+      .select("*")
+      .eq("practice_id", practiceId)
+      .eq("facebook_psid", facebookPsid)
+      .limit(1)
+      .single();
+
+    if (byFb) {
+      const updates: Record<string, string> = {};
+      if (name && (!byFb.name || byFb.name === "Unknown")) updates.name = name;
+      if (Object.keys(updates).length > 0) {
+        await adminClient.from("contacts").update(updates).eq("id", byFb.id);
+      }
+      return byFb;
+    }
+  }
+
+  if (instagramId) {
+    const { data: byIg } = await adminClient
+      .from("contacts")
+      .select("*")
+      .eq("practice_id", practiceId)
+      .eq("instagram_id", instagramId)
+      .limit(1)
+      .single();
+
+    if (byIg) {
+      const updates: Record<string, string> = {};
+      if (name && (!byIg.name || byIg.name === "Unknown")) updates.name = name;
+      if (Object.keys(updates).length > 0) {
+        await adminClient.from("contacts").update(updates).eq("id", byIg.id);
+      }
+      return byIg;
+    }
+  }
+
+  // 2. Try matching by phone
   if (phone) {
     const { data: byPhone } = await adminClient
       .from("contacts")
@@ -64,6 +106,9 @@ export async function findOrCreateContact(
       const updates: Record<string, string> = {};
       if (name && !byPhone.name) updates.name = name;
       if (email && !byPhone.email) updates.email = email;
+      // Enrich with Meta IDs if matched by phone
+      if (facebookPsid && !byPhone.facebook_psid) updates.facebook_psid = facebookPsid;
+      if (instagramId && !byPhone.instagram_id) updates.instagram_id = instagramId;
       if (Object.keys(updates).length > 0) {
         await adminClient.from("contacts").update(updates).eq("id", byPhone.id);
       }
@@ -71,7 +116,7 @@ export async function findOrCreateContact(
     }
   }
 
-  // 2. Try matching by email
+  // 3. Try matching by email
   if (email) {
     const { data: byEmail } = await adminClient
       .from("contacts")
@@ -85,6 +130,9 @@ export async function findOrCreateContact(
       const updates: Record<string, string> = {};
       if (name && !byEmail.name) updates.name = name;
       if (phone && !byEmail.phone) updates.phone = phone;
+      // Enrich with Meta IDs if matched by email
+      if (facebookPsid && !byEmail.facebook_psid) updates.facebook_psid = facebookPsid;
+      if (instagramId && !byEmail.instagram_id) updates.instagram_id = instagramId;
       if (Object.keys(updates).length > 0) {
         await adminClient.from("contacts").update(updates).eq("id", byEmail.id);
       }
@@ -92,7 +140,7 @@ export async function findOrCreateContact(
     }
   }
 
-  // 3. Create new contact
+  // 4. Create new contact
   const { data: newContact, error } = await adminClient
     .from("contacts")
     .insert({
@@ -101,6 +149,8 @@ export async function findOrCreateContact(
       phone: phone || null,
       email: email || null,
       source: source || "chat",
+      ...(facebookPsid ? { facebook_psid: facebookPsid } : {}),
+      ...(instagramId ? { instagram_id: instagramId } : {}),
     })
     .select()
     .single();

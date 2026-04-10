@@ -53,12 +53,9 @@ export default function IntegrationsTab({
   // Form state
   const [stripeKey, setStripeKey] = useState(integrations.stripe_publishable_key || '');
   const [stripeSecret, setStripeSecret] = useState(integrations.stripe_secret_key || '');
-  const [fbPageId, setFbPageId] = useState(integrations.facebook_page_id || '');
-  const [fbAccessToken, setFbAccessToken] = useState(integrations.facebook_access_token || '');
-  const [igBusinessId, setIgBusinessId] = useState(integrations.instagram_business_id || '');
-  const [igAccessToken, setIgAccessToken] = useState(integrations.instagram_access_token || '');
   const [pmsApiKey, setPmsApiKey] = useState(pearDental?.api_key || '');
   const [pmsPracticeCode, setPmsPracticeCode] = useState(pearDental?.practice_code || '');
+  const [isMetaConnecting, setIsMetaConnecting] = useState(false);
 
   // Email verification state
   const [emailAddress, setEmailAddress] = useState(practice?.email || '');
@@ -85,8 +82,6 @@ export default function IntegrationsTab({
     if (expanded === key) { setExpanded(null); return; }
     setExpanded(key);
     if (key === 'stripe') { setStripeKey(integrations.stripe_publishable_key || ''); setStripeSecret(integrations.stripe_secret_key || ''); }
-    if (key === 'facebook_enabled') { setFbPageId(integrations.facebook_page_id || ''); setFbAccessToken(integrations.facebook_access_token || ''); }
-    if (key === 'instagram_enabled') { setIgBusinessId(integrations.instagram_business_id || ''); setIgAccessToken(integrations.instagram_access_token || ''); }
     if (key === 'pms_pearl') { setPmsApiKey(pearDental?.api_key || ''); setPmsPracticeCode(pearDental?.practice_code || ''); }
   }
 
@@ -138,54 +133,106 @@ export default function IntegrationsTab({
     } catch (err) { console.error(err); toast.error('Failed to disconnect Stripe'); }
   }
 
-  async function handleFacebookConnect() {
-    if (!fbPageId.trim() || !fbAccessToken.trim()) { toast.error('Page ID and Access Token are required'); return; }
-    setIsVerifying(true);
-    try {
-      const res = await fetch(`https://graph.facebook.com/v19.0/${fbPageId}?access_token=${fbAccessToken}`);
-      if (!res.ok) throw new Error('Invalid Page ID or Access Token');
-      const page = await res.json();
-      const updated = { ...integrations, facebook_page_id: fbPageId.trim(), facebook_access_token: fbAccessToken.trim(), facebook_page_name: page.name || '', facebook_enabled: true };
-      const { error } = await supabase.from('practices').update({ integrations: updated }).eq('id', practice?.id);
-      if (error) throw error;
-      setIntegrations(updated);
-      toast.success(`Facebook connected: ${page.name || fbPageId}`); setExpanded(null);
-    } catch (err) { toast.error(err.message); } finally { setIsVerifying(false); }
+  // Meta App ID — used for OAuth redirect URL
+  const META_APP_ID = import.meta.env.VITE_META_APP_ID || '';
+
+  // Meta OAuth: single button connects both Facebook + Instagram
+  function handleMetaLogin() {
+    if (!META_APP_ID) {
+      toast.error('Meta App not configured — contact support');
+      return;
+    }
+    // Store practice ID in sessionStorage so the callback can use it
+    sessionStorage.setItem('meta_connect_practice_id', practice?.id || '');
+
+    const redirectUri = `${window.location.origin}/`;
+    const scope = 'pages_messaging,pages_manage_metadata,instagram_manage_messages,pages_show_list';
+    const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&response_type=code&state=meta_connect`;
+
+    window.location.href = authUrl;
   }
 
-  async function handleFacebookDisconnect() {
-    const { facebook_page_id, facebook_access_token, facebook_page_name, facebook_enabled, ...rest } = integrations;
+  // Handle OAuth callback (called from useEffect when URL has ?code= and state=meta_connect)
+  async function handleMetaCallback(code) {
+    setIsMetaConnecting(true);
     try {
-      const { error } = await supabase.from('practices').update({ integrations: rest }).eq('id', practice?.id);
+      const redirectUri = `${window.location.origin}/`;
+      const { data, error } = await supabase.functions.invoke('meta-connect', {
+        body: {
+          practiceId: practice?.id,
+          code,
+          redirectUri,
+        },
+      });
       if (error) throw error;
-      setIntegrations(rest); setFbPageId(''); setFbAccessToken('');
-      toast.success('Facebook Messenger disconnected'); setExpanded(null);
-    } catch (err) { toast.error('Failed to disconnect Facebook'); console.error(err); }
+      if (data?.error) throw new Error(data.error);
+
+      // Update local state with the new integrations
+      const { data: refreshed } = await supabase
+        .from('practices')
+        .select('integrations')
+        .eq('id', practice?.id)
+        .single();
+
+      if (refreshed) {
+        setIntegrations(refreshed.integrations || {});
+      }
+
+      let msg = `Facebook connected: ${data.facebook?.pageName || 'Page'}`;
+      if (data.instagram?.connected) {
+        msg += ` + Instagram: @${data.instagram.username || 'connected'}`;
+      }
+      toast.success(msg);
+      setExpanded(null);
+
+      // Clean up URL params
+      const url = new URL(window.location.href);
+      url.searchParams.delete('code');
+      url.searchParams.delete('state');
+      window.history.replaceState({}, '', url.pathname + url.search);
+    } catch (err) {
+      toast.error(err.message || 'Failed to connect Facebook');
+      console.error('[Meta OAuth]', err);
+    } finally {
+      setIsMetaConnecting(false);
+      sessionStorage.removeItem('meta_connect_practice_id');
+    }
   }
 
-  async function handleInstagramConnect() {
-    if (!igBusinessId.trim() || !igAccessToken.trim()) { toast.error('Business Account ID and Access Token are required'); return; }
-    setIsVerifying(true);
-    try {
-      const res = await fetch(`https://graph.facebook.com/v19.0/${igBusinessId}?fields=name,username&access_token=${igAccessToken}`);
-      if (!res.ok) throw new Error('Invalid Business Account ID or Access Token');
-      const account = await res.json();
-      const updated = { ...integrations, instagram_business_id: igBusinessId.trim(), instagram_access_token: igAccessToken.trim(), instagram_username: account.username || '', instagram_enabled: true };
-      const { error } = await supabase.from('practices').update({ integrations: updated }).eq('id', practice?.id);
-      if (error) throw error;
-      setIntegrations(updated);
-      toast.success(`Instagram connected: @${account.username || igBusinessId}`); setExpanded(null);
-    } catch (err) { toast.error(err.message); } finally { setIsVerifying(false); }
-  }
+  // Check for Meta OAuth callback on mount
+  React.useEffect(() => {
+    const url = new URL(window.location.href);
+    const code = url.searchParams.get('code');
+    const state = url.searchParams.get('state');
+    if (code && state === 'meta_connect' && practice?.id) {
+      handleMetaCallback(code);
+    }
+  }, [practice?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
-  async function handleInstagramDisconnect() {
-    const { instagram_business_id, instagram_access_token, instagram_username, instagram_enabled, ...rest } = integrations;
+  async function handleMetaDisconnect() {
     try {
-      const { error } = await supabase.from('practices').update({ integrations: rest }).eq('id', practice?.id);
+      const { error } = await supabase.functions.invoke('meta-connect', {
+        body: { practiceId: practice?.id, disconnect: true },
+      });
       if (error) throw error;
-      setIntegrations(rest); setIgBusinessId(''); setIgAccessToken('');
-      toast.success('Instagram disconnected'); setExpanded(null);
-    } catch (err) { toast.error('Failed to disconnect Instagram'); console.error(err); }
+
+      // Refresh integrations from DB
+      const { data: refreshed } = await supabase
+        .from('practices')
+        .select('integrations')
+        .eq('id', practice?.id)
+        .single();
+
+      if (refreshed) {
+        setIntegrations(refreshed.integrations || {});
+      }
+
+      toast.success('Facebook & Instagram disconnected');
+      setExpanded(null);
+    } catch (err) {
+      toast.error('Failed to disconnect');
+      console.error(err);
+    }
   }
 
   async function handlePmsConnect() {
@@ -478,61 +525,93 @@ export default function IntegrationsTab({
               </div>
             )}
 
-            {/* ── Facebook ── */}
+            {/* ── Facebook (OAuth) ── */}
             {expanded === 'facebook_enabled' && (
               <div className="space-y-3 max-w-sm">
-                <p className="text-sm font-semibold text-slate-900 mb-2">Facebook Messenger — Connect</p>
-                {isConnected.facebook_enabled && <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-50 text-xs text-green-700"><CheckCircle2 className="w-3.5 h-3.5" /><span>Connected: {integrations.facebook_page_name || integrations.facebook_page_id}</span></div>}
-                <div className="space-y-1.5"><Label className="text-xs text-slate-500">Page ID</Label><Input placeholder="123456789012345" value={fbPageId} onChange={(e) => setFbPageId(e.target.value)} className="font-mono text-xs h-8" /></div>
-                <div className="space-y-1.5"><Label className="text-xs text-slate-500">Page Access Token</Label><Input type="password" placeholder="EAAGm..." value={fbAccessToken} onChange={(e) => setFbAccessToken(e.target.value)} className="font-mono text-xs h-8" /></div>
-                <div className="flex items-start gap-2 p-2.5 rounded-lg bg-slate-50 text-xs text-slate-400">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  <span>Get credentials from the <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noreferrer" className="text-[#1877F2] underline underline-offset-2">Meta Graph API Explorer</a>. Needs <code className="bg-slate-200 px-1 rounded">pages_messaging</code>.</span>
-                </div>
-                {isConnected.facebook_enabled && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-slate-500">Webhook URL</Label>
-                    <div className="flex items-center gap-1.5">
-                      <Input readOnly value="https://amxcposgqlmgapzoopze.supabase.co/functions/v1/meta-webhook" className="font-mono text-xs h-8 bg-slate-50 text-slate-500" />
-                      <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => { navigator.clipboard.writeText('https://amxcposgqlmgapzoopze.supabase.co/functions/v1/meta-webhook'); toast.success('Webhook URL copied'); }}><Copy className="w-3.5 h-3.5" /></Button>
-                    </div>
+                <p className="text-sm font-semibold text-slate-900 mb-2">Facebook Messenger</p>
+                {isMetaConnecting && (
+                  <div className="flex items-center gap-2 p-3 rounded-lg bg-blue-50 text-xs text-blue-700">
+                    <Loader2 className="w-3.5 h-3.5 animate-spin" />
+                    <span>Connecting your Facebook Page...</span>
                   </div>
                 )}
-                <div className="flex items-center gap-2">
-                  <Button size="sm" className="h-7 text-xs bg-[#1877F2] hover:bg-[#166ad8] text-white" disabled={isVerifying || !fbPageId || !fbAccessToken} onClick={handleFacebookConnect}>
-                    {isVerifying ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" /> Verifying</> : isConnected.facebook_enabled ? <><Check className="w-3 h-3 mr-1.5" /> Update</> : 'Connect'}
-                  </Button>
-                  {isConnected.facebook_enabled && <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50" onClick={handleFacebookDisconnect}>Disconnect</Button>}
-                </div>
+                {isConnected.facebook_enabled ? (
+                  <>
+                    <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-50 text-xs text-green-700">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Connected: {integrations.facebook_page_name || integrations.facebook_page_id}</span>
+                    </div>
+                    {isConnected.instagram_enabled && (
+                      <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-50 text-xs text-green-700">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Instagram: @{integrations.instagram_username || integrations.instagram_business_id}</span>
+                      </div>
+                    )}
+                    <p className="text-xs text-slate-500">AI will automatically respond to Messenger{isConnected.instagram_enabled ? ' and Instagram' : ''} messages on behalf of your practice.</p>
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button size="sm" className="h-7 text-xs bg-[#1877F2] hover:bg-[#166ad8] text-white" onClick={handleMetaLogin}>
+                        Reconnect
+                      </Button>
+                      <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50" onClick={handleMetaDisconnect}>
+                        Disconnect
+                      </Button>
+                    </div>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-slate-500">Connect your Facebook Page to let AI handle Messenger DMs. If your Instagram Business account is linked to the same Page, it connects automatically.</p>
+                    <Button size="sm" className="h-8 text-xs bg-[#1877F2] hover:bg-[#166ad8] text-white gap-2" disabled={isMetaConnecting} onClick={handleMetaLogin}>
+                      <Facebook className="w-3.5 h-3.5" />
+                      Connect with Facebook
+                    </Button>
+                  </>
+                )}
               </div>
             )}
 
-            {/* ── Instagram ── */}
+            {/* ── Instagram (linked via Facebook OAuth) ── */}
             {expanded === 'instagram_enabled' && (
               <div className="space-y-3 max-w-sm">
-                <p className="text-sm font-semibold text-slate-900 mb-2">Instagram DMs — Connect</p>
-                {isConnected.instagram_enabled && <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-50 text-xs text-green-700"><CheckCircle2 className="w-3.5 h-3.5" /><span>Connected: @{integrations.instagram_username || integrations.instagram_business_id}</span></div>}
-                <div className="space-y-1.5"><Label className="text-xs text-slate-500">Business Account ID</Label><Input placeholder="17841400..." value={igBusinessId} onChange={(e) => setIgBusinessId(e.target.value)} className="font-mono text-xs h-8" /></div>
-                <div className="space-y-1.5"><Label className="text-xs text-slate-500">Access Token</Label><Input type="password" placeholder="EAAGm..." value={igAccessToken} onChange={(e) => setIgAccessToken(e.target.value)} className="font-mono text-xs h-8" /></div>
-                <div className="flex items-start gap-2 p-2.5 rounded-lg bg-slate-50 text-xs text-slate-400">
-                  <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                  <span>Must be a Business/Creator account. Get credentials from the <a href="https://developers.facebook.com/tools/explorer/" target="_blank" rel="noreferrer" className="text-[#E1306C] underline underline-offset-2">Graph API Explorer</a>. Needs <code className="bg-slate-200 px-1 rounded">instagram_manage_messages</code>.</span>
-                </div>
-                {isConnected.instagram_enabled && (
-                  <div className="space-y-1.5">
-                    <Label className="text-xs text-slate-500">Webhook URL</Label>
-                    <div className="flex items-center gap-1.5">
-                      <Input readOnly value="https://amxcposgqlmgapzoopze.supabase.co/functions/v1/meta-webhook" className="font-mono text-xs h-8 bg-slate-50 text-slate-500" />
-                      <Button variant="ghost" size="sm" className="h-8 px-2" onClick={() => { navigator.clipboard.writeText('https://amxcposgqlmgapzoopze.supabase.co/functions/v1/meta-webhook'); toast.success('Webhook URL copied'); }}><Copy className="w-3.5 h-3.5" /></Button>
+                <p className="text-sm font-semibold text-slate-900 mb-2">Instagram DMs</p>
+                {isConnected.instagram_enabled ? (
+                  <>
+                    <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-50 text-xs text-green-700">
+                      <CheckCircle2 className="w-3.5 h-3.5" />
+                      <span>Connected: @{integrations.instagram_username || integrations.instagram_business_id}</span>
                     </div>
-                  </div>
+                    {isConnected.facebook_enabled && (
+                      <div className="flex items-center gap-2 p-2.5 rounded-lg bg-green-50 text-xs text-green-700">
+                        <CheckCircle2 className="w-3.5 h-3.5" />
+                        <span>Facebook: {integrations.facebook_page_name}</span>
+                      </div>
+                    )}
+                    <p className="text-xs text-slate-500">AI will automatically respond to Instagram DMs on behalf of your practice.</p>
+                    <div className="flex items-center gap-2 pt-1">
+                      <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50" onClick={handleMetaDisconnect}>
+                        Disconnect
+                      </Button>
+                    </div>
+                  </>
+                ) : isConnected.facebook_enabled ? (
+                  <>
+                    <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 text-xs text-amber-700">
+                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                      <span>Facebook is connected but no Instagram Business account was found linked to your Page. Make sure your Instagram is a Business or Creator account and is linked to your Facebook Page in Meta Business Suite.</span>
+                    </div>
+                    <Button size="sm" className="h-8 text-xs bg-[#1877F2] hover:bg-[#166ad8] text-white gap-2" onClick={handleMetaLogin}>
+                      <Facebook className="w-3.5 h-3.5" />
+                      Reconnect to retry
+                    </Button>
+                  </>
+                ) : (
+                  <>
+                    <p className="text-xs text-slate-500">Instagram connects automatically when you connect your Facebook Page. Your Instagram must be a Business or Creator account linked to your Facebook Page.</p>
+                    <Button size="sm" className="h-8 text-xs bg-[#1877F2] hover:bg-[#166ad8] text-white gap-2" disabled={isMetaConnecting} onClick={handleMetaLogin}>
+                      <Facebook className="w-3.5 h-3.5" />
+                      Connect with Facebook
+                    </Button>
+                  </>
                 )}
-                <div className="flex items-center gap-2">
-                  <Button size="sm" className="h-7 text-xs bg-[#E1306C] hover:bg-[#c72c60] text-white" disabled={isVerifying || !igBusinessId || !igAccessToken} onClick={handleInstagramConnect}>
-                    {isVerifying ? <><Loader2 className="w-3 h-3 animate-spin mr-1.5" /> Verifying</> : isConnected.instagram_enabled ? <><Check className="w-3 h-3 mr-1.5" /> Update</> : 'Connect'}
-                  </Button>
-                  {isConnected.instagram_enabled && <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50" onClick={handleInstagramDisconnect}>Disconnect</Button>}
-                </div>
               </div>
             )}
 
@@ -573,27 +652,33 @@ export default function IntegrationsTab({
       <section>
         <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Communication Channels</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {CHANNELS.map(ch => renderCard(ch, handleChannelClick))}
+          {CHANNELS.flatMap(ch => [
+            renderCard(ch, handleChannelClick),
+            ...(expanded === ch.key ? [<div key={`${ch.key}-panel`} className="col-span-2 sm:col-span-3">{renderPanel()}</div>] : []),
+          ])}
         </div>
-        {['phone_enabled', 'email_enabled', 'web_chat_enabled', 'facebook_enabled', 'instagram_enabled'].includes(expanded) && renderPanel()}
       </section>
 
       {/* Payments & Services */}
       <section>
         <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Payments</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {CONNECT_ITEMS.map(item => renderCard(item, openPanel))}
+          {CONNECT_ITEMS.flatMap(item => [
+            renderCard(item, openPanel),
+            ...(expanded === item.key ? [<div key={`${item.key}-panel`} className="col-span-2 sm:col-span-3">{renderPanel()}</div>] : []),
+          ])}
         </div>
-        {expanded === 'stripe' && renderPanel()}
       </section>
 
       {/* Practice Management Systems */}
       <section>
         <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Practice Management System</h2>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {PMS_SYSTEMS.map(pms => renderCard(pms, openPanel))}
+          {PMS_SYSTEMS.flatMap(pms => [
+            renderCard(pms, openPanel),
+            ...(expanded === pms.key ? [<div key={`${pms.key}-panel`} className="col-span-2 sm:col-span-3">{renderPanel()}</div>] : []),
+          ])}
         </div>
-        {['pms_pearl', 'pms_aerona'].includes(expanded) && renderPanel()}
       </section>
     </div>
   );
