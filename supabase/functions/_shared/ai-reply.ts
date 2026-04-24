@@ -59,8 +59,7 @@ export async function getAiReply(opts: AiReplyOptions): Promise<string> {
   }
 
   try {
-    const systemPrompt = buildSystemPrompt(opts);
-    const reply = await fetchAgentReply(agentId, message, systemPrompt, opts.timeoutMs ?? 12000);
+    const reply = await fetchAgentReply(agentId, message, opts.timeoutMs ?? 12000);
     if (reply && reply.trim().length > 0) {
       return reply.trim();
     }
@@ -72,65 +71,43 @@ export async function getAiReply(opts: AiReplyOptions): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// Build the per-call context that tells the agent about this channel + clinic
-// ---------------------------------------------------------------------------
-
-function buildSystemPrompt(opts: AiReplyOptions): string {
-  const { practiceContext, conversationHistory, contactName, channel } = opts;
-
-  const parts = [
-    `You are responding to a ${CHANNEL_LABEL[channel]}.`,
-    `Practice: ${practiceContext.practice_name}`,
-    practiceContext.practice_phone ? `Phone: ${practiceContext.practice_phone}` : null,
-    practiceContext.practice_website ? `Website: ${practiceContext.practice_website}` : null,
-    practiceContext.opening_hours ? `Hours:\n${practiceContext.opening_hours}` : null,
-    practiceContext.clinic_guidelines ? `Guidelines: ${practiceContext.clinic_guidelines}` : null,
-    practiceContext.agent_tone ? `Tone: ${practiceContext.agent_tone}` : null,
-    practiceContext.practitioners?.length > 0
-      // deno-lint-ignore no-explicit-any
-      ? `Team:\n${practiceContext.practitioners.map((p: any) => `- ${p.name}${p.credentials ? ` (${p.credentials})` : ""}${p.bio ? `: ${p.bio}` : ""}`).join("\n")}`
-      : null,
-    practiceContext.prices?.length > 0
-      // deno-lint-ignore no-explicit-any
-      ? `Prices:\n${practiceContext.prices.map((p: any) => `- ${p.service}: ${p.price}`).join("\n")}`
-      : null,
-    conversationHistory ? `Previous interactions:\n${conversationHistory}` : null,
-    contactName && contactName !== "Unknown" ? `Patient name: ${contactName}` : null,
-    channel === "sms"
-      ? "Keep replies under 320 characters (2 SMS segments). Plain text, no markdown."
-      : null,
-  ].filter(Boolean);
-
-  return parts.join("\n\n");
-}
-
-// ---------------------------------------------------------------------------
 // ElevenLabs ConvAI WebSocket call
 // ---------------------------------------------------------------------------
 
 /**
  * Open a WebSocket to the ConvAI agent, send the user message, collect the
  * agent's text reply, close. Resolves to the reply text or null on timeout.
+ *
+ * Protocol notes (probed 2026-04-24):
+ *   - Agent config blocks `prompt` and `first_message` overrides, so we
+ *     send an empty client-init and rely on the agent's provisioned prompt.
+ *     Per-practice context is baked in at agent-creation time by
+ *     provision-practice.
+ *   - The agent auto-emits its greeting as the FIRST agent_response even
+ *     when we send a user_message immediately after the init metadata.
+ *     We skip that first response and take the second one as the real
+ *     reply to the patient. A quick `interruption` event between them is
+ *     normal — the agent cuts its own greeting short to answer the user.
  */
 async function fetchAgentReply(
   agentId: string,
   userMessage: string,
-  systemPromptAppend: string,
   timeoutMs: number,
 ): Promise<string | null> {
-  // Signed URL authorises the WS handshake without sending the API key over wss.
+  // Signed URL authorises the WS handshake without leaking the API key on wss.
   const urlRes = await fetch(
     `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
     { headers: { "xi-api-key": ELEVENLABS_API_KEY } },
   );
   if (!urlRes.ok) {
-    console.warn("[AI REPLY] get_signed_url failed:", urlRes.status, await urlRes.text().catch(() => ""));
+    console.warn("[AI REPLY] get_signed_url failed:", urlRes.status);
     return null;
   }
   const { signed_url } = await urlRes.json();
 
   return await new Promise<string | null>((resolve) => {
     let replyText: string | null = null;
+    let agentResponsesSeen = 0;
     let done = false;
     const finish = (value: string | null) => {
       if (done) return;
@@ -144,16 +121,8 @@ async function fetchAgentReply(
     const ws = new WebSocket(signed_url);
 
     ws.onopen = () => {
-      ws.send(JSON.stringify({
-        type: "conversation_initiation_client_data",
-        conversation_config_override: {
-          agent: {
-            prompt: { prompt: systemPromptAppend },
-            first_message: "",
-            language: "en",
-          },
-        },
-      }));
+      // Empty client-init: no overrides, use the agent's own configuration.
+      ws.send(JSON.stringify({ type: "conversation_initiation_client_data" }));
     };
 
     ws.onmessage = (evt) => {
@@ -163,26 +132,33 @@ async function fetchAgentReply(
       const type = data.type as string;
 
       if (type === "conversation_initiation_metadata") {
-        // Agent is ready — send the patient's message.
+        // Post the patient's message immediately — the agent will still
+        // emit its greeting first, which we'll skip below.
         ws.send(JSON.stringify({ type: "user_message", text: userMessage }));
       } else if (type === "agent_response") {
+        agentResponsesSeen++;
         // deno-lint-ignore no-explicit-any
-        const evt = data.agent_response_event as any;
-        const text = evt?.agent_response;
+        const text = (data.agent_response_event as any)?.agent_response;
+
+        if (agentResponsesSeen === 1) {
+          // This is the auto-greeting ("Hello... welcome to <practice>...").
+          // Ignore it; the next agent_response is the real reply.
+          return;
+        }
         if (typeof text === "string") {
           replyText = text;
-          // First agent_response is the full reply — we're done.
           finish(replyText);
         }
       } else if (type === "ping") {
-        // Keepalive. Echo back so the server doesn't close us for inactivity.
+        // Keepalive — echo back so the server doesn't close us mid-generation.
         // deno-lint-ignore no-explicit-any
         const eventId = (data.ping_event as any)?.event_id;
         if (eventId !== undefined) {
           ws.send(JSON.stringify({ type: "pong", event_id: eventId }));
         }
       }
-      // Ignore: audio chunks, user_transcript echoes, internal_tentative_*, etc.
+      // Ignore: audio chunks, user_transcript echoes, agent_response_correction,
+      // interruption events — none affect the text reply we're after.
     };
 
     ws.onerror = (err) => {
