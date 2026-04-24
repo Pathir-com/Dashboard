@@ -93,21 +93,25 @@ jobs:
           fi
 
       # Deploy every edge function whose directory changed in this push.
-      # Manual workflow_dispatch with deploy_all=true overrides the diff and
-      # deploys everything — useful when a previous deploy missed files (e.g.
-      # after history rewrites or initial bootstrap).
+      # Two escape hatches when diff misses files (history rewrite, bootstrap):
+      #   - workflow_dispatch with deploy_all=true
+      #   - include "[deploy-all]" anywhere in the head commit message
       - name: Deploy changed edge functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           PUSH_BEFORE: ${{ github.event.before }}
           DEPLOY_ALL: ${{ inputs.deploy_all }}
+          HEAD_MSG: ${{ github.event.head_commit.message }}
         run: |
           PROJECT_REF="amxcposgqlmgapzoopze"
 
-          if [ "$DEPLOY_ALL" = "true" ]; then
-            # Force-deploy every function + every shared module as "changed"
+          FORCE_ALL="false"
+          if [ "$DEPLOY_ALL" = "true" ]; then FORCE_ALL="true"; fi
+          if echo "$HEAD_MSG" | grep -q '\[deploy-all\]'; then FORCE_ALL="true"; fi
+
+          if [ "$FORCE_ALL" = "true" ]; then
             CHANGED=$(find supabase/functions -type f -name "*.ts" 2>/dev/null)
-            echo "Manual deploy_all=true — deploying every function."
+            echo "Force-deploy triggered — deploying every function."
           else
             # Diff against the commit main was at BEFORE this push (covers
             # multi-commit pushes — HEAD~1 would miss the earlier commits).
@@ -147,9 +151,15 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           PUSH_BEFORE: ${{ github.event.before }}
           DEPLOY_ALL: ${{ inputs.deploy_all }}
+          HEAD_MSG: ${{ github.event.head_commit.message }}
         run: |
           PROJECT_REF="amxcposgqlmgapzoopze"
-          if [ "$DEPLOY_ALL" = "true" ]; then
+
+          FORCE_ALL="false"
+          if [ "$DEPLOY_ALL" = "true" ]; then FORCE_ALL="true"; fi
+          if echo "$HEAD_MSG" | grep -q '\[deploy-all\]'; then FORCE_ALL="true"; fi
+
+          if [ "$FORCE_ALL" = "true" ]; then
             CHANGED=$(find supabase/migrations -type f -name "*.sql" 2>/dev/null)
           else
             BEFORE="$PUSH_BEFORE"
