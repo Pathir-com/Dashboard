@@ -1,22 +1,20 @@
 /**
- * Purpose:  Send an outbound SMS from a practice via its Messaging Service.
- *           Uses the alpha sender (practice name) for outbound messages.
- *           Falls back to direct Twilio API if no Messaging Service is configured.
+ * Purpose:  Send an outbound SMS from a practice. Routes via Twilio or
+ *           TextMagic depending on the practice's `integrations.sms_provider`
+ *           setting — see _shared/sms.ts.
  *
- * Dependencies: Twilio API, Supabase (practices table)
+ * Dependencies: Supabase (practices table), _shared/sms.ts, _shared/cors.ts
  * Used by:      Dashboard, appointment reminder system, enquiry replies
- * Changes:      2026-03-19  Initial implementation
+ * Changes:      2026-04-24  Switch to _shared/sms.ts provider abstraction.
+ *               2026-03-19  Initial implementation.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { sendSms, SmsError } from "../_shared/sms.ts";
 
-const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID")!;
-const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
-
-const twilioAuth = btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`);
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -24,7 +22,6 @@ Deno.serve(async (req) => {
   }
 
   try {
-    // ── Auth ──
     const authHeader = req.headers.get("Authorization");
     if (!authHeader) {
       return new Response(
@@ -44,7 +41,6 @@ Deno.serve(async (req) => {
       );
     }
 
-    // ── Parse body ──
     const { practiceId, to, body } = await req.json();
 
     if (!practiceId || !to || !body) {
@@ -56,10 +52,11 @@ Deno.serve(async (req) => {
 
     const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // ── Verify ownership ──
     const { data: practice, error: practiceError } = await adminClient
       .from("practices")
-      .select("id, name, messaging_service_sid, twilio_sms_number, twilio_phone_number, owner_id")
+      .select(
+        "id, name, integrations, messaging_service_sid, twilio_sms_number, twilio_phone_number, owner_id",
+      )
       .eq("id", practiceId)
       .eq("owner_id", user.id)
       .single();
@@ -71,62 +68,35 @@ Deno.serve(async (req) => {
       );
     }
 
-    // ── Build Twilio message params ──
-    const params: Record<string, string> = {
-      To: to,
-      Body: body,
-    };
-
-    if (practice.messaging_service_sid) {
-      // Use Messaging Service (sends with alpha sender name)
-      params.MessagingServiceSid = practice.messaging_service_sid;
-    } else if (practice.twilio_sms_number) {
-      // Fallback: send from the SMS mobile number directly
-      params.From = practice.twilio_sms_number;
-    } else {
-      return new Response(
-        JSON.stringify({ message: "SMS not configured for this practice. No Messaging Service or SMS number found." }),
-        { status: 400, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+    try {
+      const result = await sendSms(practice, to, body);
+      console.log(
+        `[SEND SMS] ${practice.name} via ${result.provider} | to=${result.to} | id=${result.messageId} | status=${result.status}`,
       );
-    }
-
-    // ── Send via Twilio ──
-    const res = await fetch(
-      `https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}/Messages.json`,
-      {
-        method: "POST",
-        headers: {
-          Authorization: `Basic ${twilioAuth}`,
-          "Content-Type": "application/x-www-form-urlencoded",
-        },
-        body: new URLSearchParams(params).toString(),
-      },
-    );
-
-    const result = await res.json();
-
-    if (!res.ok) {
-      console.error("[SEND SMS] Twilio error:", JSON.stringify(result));
       return new Response(
         JSON.stringify({
-          message: result.message || "Failed to send SMS",
-          code: result.code,
+          provider: result.provider,
+          messageSid: result.messageId,
+          status: result.status,
+          from: result.from,
+          to: result.to,
         }),
-        { status: res.status, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        { headers: { ...corsHeaders, "Content-Type": "application/json" } },
       );
+    } catch (e) {
+      if (e instanceof SmsError) {
+        console.error(`[SEND SMS] ${e.provider} error:`, e.message, e.providerCode);
+        return new Response(
+          JSON.stringify({
+            message: e.message,
+            provider: e.provider,
+            code: e.providerCode,
+          }),
+          { status: e.statusCode, headers: { ...corsHeaders, "Content-Type": "application/json" } },
+        );
+      }
+      throw e;
     }
-
-    console.log(`[SEND SMS] Sent to ${to} from ${practice.name} | SID: ${result.sid} | Status: ${result.status}`);
-
-    return new Response(
-      JSON.stringify({
-        messageSid: result.sid,
-        status: result.status,
-        from: result.from || practice.name,
-        to: result.to,
-      }),
-      { headers: { ...corsHeaders, "Content-Type": "application/json" } },
-    );
   } catch (err) {
     console.error("[SEND SMS ERROR]", err);
     return new Response(

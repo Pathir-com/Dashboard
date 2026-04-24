@@ -28,6 +28,7 @@ export async function loadPractice(
   opts: {
     practiceId?: string;
     twilioNumber?: string;
+    textmagicNumber?: string;
     agentId?: string;
     facebookPageId?: string;
     instagramBusinessId?: string;
@@ -53,6 +54,14 @@ export async function loadPractice(
       .eq("twilio_phone_number", opts.twilioNumber)
       .single();
     practice = data;
+  }
+
+  if (!practice && opts.textmagicNumber) {
+    const { data: practices } = await db
+      .from("practices")
+      .select(PRACTICE_CONTEXT_COLS)
+      .filter("integrations->textmagic->>phone_number", "eq", opts.textmagicNumber);
+    practice = practices?.[0] || null;
   }
 
   if (!practice && opts.agentId) {
