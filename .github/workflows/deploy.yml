@@ -107,7 +107,11 @@ jobs:
 
           FORCE_ALL="false"
           if [ "$DEPLOY_ALL" = "true" ]; then FORCE_ALL="true"; fi
-          if echo "$HEAD_MSG" | grep -q '\[deploy-all\]'; then FORCE_ALL="true"; fi
+          # Only the commit SUBJECT (first line) opts into force-all.
+          # Matching the body caught prose mentions ("no [deploy-all] needed")
+          # and silently suppressed migration failures once already.
+          FIRST_LINE=$(echo "$HEAD_MSG" | head -n 1)
+          if echo "$FIRST_LINE" | grep -q '\[deploy-all\]'; then FORCE_ALL="true"; fi
 
           if [ "$FORCE_ALL" = "true" ]; then
             CHANGED=$(find supabase/functions -type f -name "*.ts" 2>/dev/null)
@@ -156,7 +160,8 @@ jobs:
 
           FORCE_ALL="false"
           if [ "$DEPLOY_ALL" = "true" ]; then FORCE_ALL="true"; fi
-          if echo "$HEAD_MSG" | grep -q '\[deploy-all\]'; then FORCE_ALL="true"; fi
+          FIRST_LINE=$(echo "$HEAD_MSG" | head -n 1)
+          if echo "$FIRST_LINE" | grep -q '\[deploy-all\]'; then FORCE_ALL="true"; fi
 
           if [ "$FORCE_ALL" = "true" ]; then
             CHANGED=$(find supabase/migrations -type f -name "*.sql" 2>/dev/null | sort)
