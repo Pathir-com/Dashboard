@@ -95,6 +95,16 @@ Deno.serve(async (req) => {
 
     const from = normalizePhone(rawFrom);
     const to = normalizePhone(rawTo);
+
+    // Self-text guard: if sender and receiver are the same number, the AI
+    // would reply to itself and create an infinite loop (learned the hard
+    // way during routing-verification loopback). Log and bail before any
+    // DB writes or AI calls.
+    if (from && from === to) {
+      console.log(`[TEXTMAGIC WEBHOOK] Ignoring self-text on ${to}`);
+      return new Response("OK", { status: 200 });
+    }
+
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
     // Find the practice that owns the receiving TextMagic number.
