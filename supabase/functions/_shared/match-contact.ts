@@ -29,15 +29,20 @@ interface ContactInput {
   instagramId?: string;
 }
 
-/** Normalize a UK phone number to E.164 format (+44...) */
+/**
+ * Normalise a phone number to E.164 (+CCXXXXXXX...). UK-aware: converts
+ * 07xxx local to +447xxx. For any other international digits-only form
+ * (e.g. 353851110071, 14155551234) prepends "+" so stored and incoming
+ * numbers always match across channels (SMS gateways often strip the +).
+ */
 export function normalizePhone(raw: string): string {
   let p = raw.replace(/[\s\-()]/g, "").trim();
   // UK local: 07xxx → +447xxx
   if (p.startsWith("0") && p.length >= 10) {
     p = "+44" + p.slice(1);
   }
-  // Missing +: 447xxx → +447xxx
-  if (p.match(/^44\d{9,}$/) && !p.startsWith("+")) {
+  // Any digits-only international: 353851110071 → +353851110071
+  if (!p.startsWith("+") && p.match(/^\d{10,15}$/)) {
     p = "+" + p;
   }
   return p;

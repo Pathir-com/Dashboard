@@ -116,10 +116,11 @@ Deno.serve(async (req) => {
       `[TEXTMAGIC WEBHOOK] ${practice.name} | from=${from} | id=${messageId} | text="${text.slice(0, 80)}"`,
     );
 
-    // Contact — phone-based, shared cross-channel matcher.
+    // Contact — phone-based, shared cross-channel matcher. Passing no name
+    // lets findOrCreateContact default to "Unknown" for new contacts and
+    // keep the existing name (e.g. from a prior phone call) for returnees.
     const contact = await findOrCreateContact(db, {
       practiceId: practice.id,
-      name: "SMS Contact",
       phone: from,
       source: "sms",
     });
@@ -133,7 +134,7 @@ Deno.serve(async (req) => {
     const { enquiryId } = await appendToEnquiry(db, {
       practiceId: practice.id,
       contactId: contact.id,
-      patientName: contact.name || "SMS Contact",
+      patientName: contact.name || "Unknown",
       channel: "sms",
       message: text,
       role: "patient",
