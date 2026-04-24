@@ -4,9 +4,9 @@
  * phone calls. Provides a fallback reply when the WS call fails or times
  * out so webhooks stay responsive.
  *
- * Why WebSocket: ElevenLabs ConvAI has no REST one-shot text endpoint
- * (every /convai/* and /convai/agents/*/* path returns 404). WebSocket
- * is the documented integration path for text + voice.
+ * Why WebSocket: ElevenLabs ConvAI has no REST one-shot text endpoint —
+ * every candidate path under /v1/convai returns 404. WebSocket is the
+ * documented integration path for both text and voice.
  *
  * Used by:
  *   - supabase/functions/meta-webhook/index.ts
