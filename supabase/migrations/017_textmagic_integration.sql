@@ -26,12 +26,15 @@ CREATE INDEX IF NOT EXISTS sms_deliveries_updated_idx ON sms_deliveries (updated
 -- Spark Dental Clinic: enable TextMagic as primary SMS provider.
 -- The TextMagic number +447418341716 forwards inbound voice to the Twilio
 -- number, so this single patient-facing number serves both channels.
+--
+-- No sender_id: TextMagic rejects alpha sender IDs unless separately
+-- registered, which requires UK regulatory approval. Using the phone number
+-- as the "from" always works. Add sender_id later only if/when registered.
 UPDATE practices
 SET integrations = COALESCE(integrations, '{}'::jsonb) || jsonb_build_object(
   'sms_provider', 'textmagic',
   'textmagic', jsonb_build_object(
     'phone_number', '+447418341716',
-    'sender_id', 'Spark Denta',
     'enabled', true,
     'ai_reply_enabled', true
   )
