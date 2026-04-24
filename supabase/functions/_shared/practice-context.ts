@@ -74,10 +74,12 @@ export async function loadPractice(
   }
 
   if (!practice && opts.facebookPageId) {
+    // `->>` extracts as text so the eq filter compares string-to-string.
+    // Using `->` returns JSONB with quotes and the compare silently fails.
     const { data: practices } = await db
       .from("practices")
       .select(PRACTICE_CONTEXT_COLS)
-      .filter("integrations->facebook_page_id", "eq", opts.facebookPageId);
+      .filter("integrations->>facebook_page_id", "eq", opts.facebookPageId);
     practice = practices?.[0] || null;
   }
 
@@ -85,7 +87,7 @@ export async function loadPractice(
     const { data: practices } = await db
       .from("practices")
       .select(PRACTICE_CONTEXT_COLS)
-      .filter("integrations->instagram_business_id", "eq", opts.instagramBusinessId);
+      .filter("integrations->>instagram_business_id", "eq", opts.instagramBusinessId);
     practice = practices?.[0] || null;
   }
 
