@@ -1,6 +1,7 @@
 import React, { useState, useEffect, useRef } from 'react';
 import { useQuery, useMutation, useQueryClient } from '@tanstack/react-query';
 import { base44 } from '@/api/base44Client';
+import { subscribeToEnquiryMessages } from '@/lib/supabaseData';
 import { Link } from 'react-router-dom';
 import { createPageUrl } from '@/utils';
 import { Checkbox } from '@/components/ui/checkbox';
@@ -109,6 +110,17 @@ export default function Home() {
       });
     },
   });
+
+  // Live-stream new messages landing on any enquiry for this practice.
+  // On each INSERT, invalidate the enquiries query so the affected enquiry
+  // re-fetches with the fresh messages nested in.
+  useEffect(() => {
+    if (!selectedPractice?.id) return;
+    const unsubscribe = subscribeToEnquiryMessages(selectedPractice.id, () => {
+      queryClient.invalidateQueries({ queryKey: ['enquiries', selectedPractice.id] });
+    });
+    return unsubscribe;
+  }, [selectedPractice?.id, queryClient]);
 
   // Notification for new enquiries
   useEffect(() => {
@@ -371,9 +383,9 @@ export default function Home() {
                                 </div>
                               </AccordionTrigger>
                               <AccordionContent className="bg-slate-50 rounded-lg p-4 max-h-96 overflow-y-auto mt-1">
-                                {enquiry.conversation && enquiry.conversation.length > 0 ? (
+                                {enquiry.messages && enquiry.messages.length > 0 ? (
                                   <div className="space-y-3">
-                                    {enquiry.conversation.map((msg, idx) => (
+                                    {enquiry.messages.map((msg, idx) => (
                                       <div
                                         key={idx}
                                         className={`flex ${msg.role === 'patient' ? 'justify-end' : 'justify-start'}`}
@@ -388,12 +400,12 @@ export default function Home() {
                                           <p className="text-sm leading-relaxed whitespace-pre-wrap">
                                             {msg.message}
                                           </p>
-                                          {msg.timestamp && (
+                                          {msg.created_at && (
                                             <p className={`
                                               text-xs mt-1
                                               ${msg.role === 'patient' ? 'text-blue-100' : 'text-slate-400'}
                                             `}>
-                                              {format(new Date(msg.timestamp), 'h:mm a')}
+                                              {format(new Date(msg.created_at), 'h:mm a')}
                                             </p>
                                           )}
                                         </div>
@@ -529,9 +541,9 @@ export default function Home() {
                                 </div>
                               </AccordionTrigger>
                               <AccordionContent className="bg-slate-50 rounded-lg p-4 max-h-96 overflow-y-auto mt-1">
-                                {enquiry.conversation && enquiry.conversation.length > 0 ? (
+                                {enquiry.messages && enquiry.messages.length > 0 ? (
                                   <div className="space-y-3">
-                                    {enquiry.conversation.map((msg, idx) => (
+                                    {enquiry.messages.map((msg, idx) => (
                                       <div
                                         key={idx}
                                         className={`flex ${msg.role === 'patient' ? 'justify-end' : 'justify-start'}`}
@@ -546,12 +558,12 @@ export default function Home() {
                                           <p className="text-sm leading-relaxed whitespace-pre-wrap">
                                             {msg.message}
                                           </p>
-                                          {msg.timestamp && (
+                                          {msg.created_at && (
                                             <p className={`
                                               text-xs mt-1
                                               ${msg.role === 'patient' ? 'text-blue-100' : 'text-slate-400'}
                                             `}>
-                                              {format(new Date(msg.timestamp), 'h:mm a')}
+                                              {format(new Date(msg.created_at), 'h:mm a')}
                                             </p>
                                           )}
                                         </div>

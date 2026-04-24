@@ -209,8 +209,10 @@ export async function matchContactByIdentity(
 }
 
 /**
- * Retrieve all previous enquiries for a contact, across all channels.
- * Returns them in chronological order with conversation history.
+ * Retrieve all previous enquiries for a contact, across all channels,
+ * each enriched with its messages from the normalised enquiry_messages
+ * table. Returns chronological order (oldest enquiry first). Messages
+ * inside each enquiry are also chronological.
  */
 export async function getContactHistory(
   adminClient: SupabaseClient,
@@ -218,9 +220,22 @@ export async function getContactHistory(
 ) {
   const { data: enquiries } = await adminClient
     .from("enquiries")
-    .select("id, source, message, conversation, created_at, is_completed")
+    .select(`
+      id, source, message, created_at, is_completed,
+      messages:enquiry_messages (role, message, channel, created_at)
+    `)
     .eq("contact_id", contactId)
     .order("created_at", { ascending: true });
 
-  return enquiries || [];
+  if (!enquiries) return [];
+
+  // Sort messages within each enquiry — Supabase nested selects don't order.
+  for (const e of enquiries) {
+    // deno-lint-ignore no-explicit-any
+    const msgs = (e as any).messages as Array<{ created_at: string }> | undefined;
+    if (msgs) {
+      msgs.sort((a, b) => new Date(a.created_at).getTime() - new Date(b.created_at).getTime());
+    }
+  }
+  return enquiries;
 }

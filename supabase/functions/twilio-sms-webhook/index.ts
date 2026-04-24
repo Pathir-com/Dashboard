@@ -1,22 +1,27 @@
 /**
  * Purpose:
- *   Handles incoming SMS messages via Twilio webhook.
- *   Creates an enquiry + contact, appends to recent open enquiries,
- *   and replies based on the practice's sms_enabled setting.
+ *   Handles incoming SMS via Twilio webhook. Looks up the practice by the
+ *   receiving Twilio number, records contact + enquiry + message rows, and
+ *   replies via TwiML based on the practice's SMS setting.
  *
  * Dependencies:
- *   - @supabase/supabase-js (Supabase client)
+ *   - @supabase/supabase-js
  *   - _shared/match-contact.ts (findOrCreateContact)
+ *   - _shared/conversation.ts (appendToEnquiry)
  *
  * Used by:
  *   - Twilio SMS webhook (external POST from Twilio on incoming SMS)
  *
  * Changes:
- *   2026-03-09: Ported from api/twilio-sms-webhook.js to Deno Edge Function
+ *   2026-04-24: Drop inline read-modify-write onto the conversation JSONB;
+ *               use shared appendToEnquiry so messages land in the
+ *               enquiry_messages table like every other channel.
+ *   2026-03-09: Ported from api/twilio-sms-webhook.js to Deno Edge Function.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { findOrCreateContact } from "../_shared/match-contact.ts";
+import { appendToEnquiry } from "../_shared/conversation.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -52,89 +57,57 @@ Deno.serve(async (req) => {
     const from = form.From || "";
     const to = form.To || "";
     const body = form.Body || "";
+    const messageSid = form.MessageSid || form.SmsMessageSid || null;
 
-    const adminClient = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
+    const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Find which practice owns this Twilio number
-    const { data: practice } = await adminClient
+    const { data: practice } = await db
       .from("practices")
       .select("id, name, integrations, twilio_phone_number")
       .eq("twilio_phone_number", to)
       .single();
 
     if (!practice) {
-      console.warn(`[SMS WEBHOOK] No practice for number ${to}`);
+      console.warn(`[TWILIO SMS] No practice for number ${to}`);
       return twiml("This number is not currently active.");
     }
 
-    // Check if SMS is enabled for this practice
     // deno-lint-ignore no-explicit-any
     const smsEnabled = (practice.integrations as any)?.sms_enabled !== false;
-
     if (!smsEnabled) {
       return twiml(
         `Thanks for your message. This number doesn't receive texts — please call us on ${practice.twilio_phone_number} and our team will help you.`,
       );
     }
 
-    // Find or create contact by phone number
-    const contact = await findOrCreateContact(adminClient, {
+    const contact = await findOrCreateContact(db, {
       practiceId: practice.id,
-      name: "SMS Contact",
       phone: from,
       source: "sms",
     });
 
-    // Check for a recent open enquiry from this contact (within last 24h)
-    const oneDayAgo = new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString();
-    const { data: recentEnquiry } = await adminClient
-      .from("enquiries")
-      .select("id, conversation")
-      .eq("contact_id", contact.id)
-      .eq("is_completed", false)
-      .gte("created_at", oneDayAgo)
-      .order("created_at", { ascending: false })
-      .limit(1)
-      .single();
-
-    if (recentEnquiry) {
-      // Append to existing conversation
-      const updatedConversation = [
-        ...(recentEnquiry.conversation || []),
-        { role: "patient", message: body, timestamp: new Date().toISOString() },
-      ];
-      await adminClient
-        .from("enquiries")
-        .update({ conversation: updatedConversation })
-        .eq("id", recentEnquiry.id);
-
-      console.log(`[SMS WEBHOOK] Appended to enquiry ${recentEnquiry.id}`);
-    } else {
-      // Create new enquiry
-      const { data: enquiry } = await adminClient
-        .from("enquiries")
-        .insert({
-          practice_id: practice.id,
-          contact_id: contact.id,
-          patient_name: contact.name !== "SMS Contact" ? contact.name : "SMS Contact",
-          phone_number: from,
-          message: body,
-          source: "sms",
-          is_urgent: false,
-          is_completed: false,
-          conversation: [
-            { role: "patient", message: body, timestamp: new Date().toISOString() },
-          ],
-        })
-        .select()
-        .single();
-
-      console.log(`[SMS WEBHOOK] Created enquiry ${enquiry?.id} for ${practice.name}`);
+    if (!contact) {
+      console.error(`[TWILIO SMS] Failed to create contact for ${from}`);
+      return twiml(`Thanks for your message! The team at ${practice.name} will get back to you shortly.`);
     }
+
+    const { enquiryId, isNew } = await appendToEnquiry(db, {
+      practiceId: practice.id,
+      contactId: contact.id,
+      patientName: contact.name || "Unknown",
+      channel: "sms",
+      message: body,
+      role: "patient",
+      providerMessageId: messageSid,
+    });
+
+    console.log(
+      `[TWILIO SMS] ${practice.name} | from=${from} | enquiry=${enquiryId} ${isNew ? "(new)" : "(existing)"}`,
+    );
 
     return twiml(`Thanks for your message! The team at ${practice.name} will get back to you shortly.`);
   } catch (err) {
-    console.error("[SMS WEBHOOK ERROR]", err);
+    console.error("[TWILIO SMS ERROR]", err);
     return twiml("Thanks for your message. We'll get back to you soon.");
   }
 });

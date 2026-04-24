@@ -144,8 +144,9 @@ Deno.serve(async (req) => {
           const time = new Date(e.created_at).toLocaleTimeString("en-GB", { hour: "2-digit", minute: "2-digit" });
 
           // deno-lint-ignore no-explicit-any
-          const transcript = (e.conversation || [])
-            .map((m: any) => `  ${m.role === "agent" ? "Poppy" : contact.name}: ${m.message}`)
+          const transcript = ((e as any).messages || [])
+            // deno-lint-ignore no-explicit-any
+            .map((m: any) => `  ${m.role === "clinic" ? "Poppy" : contact.name}: ${m.message}`)
             .join("\n");
 
           return `[${date} at ${time} via ${label}]\nSummary: ${e.message}\nStatus: ${e.is_completed ? "Completed" : "Open"}\nFull conversation:\n${transcript || "  (no transcript)"}`;

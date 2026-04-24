@@ -6,7 +6,9 @@
 
 import { supabase } from '@/lib/supabase';
 
-const STORAGE_KEY = 'pathir_live_v3';
+// Bump this whenever the fixture shape changes so existing browsers reseed
+// instead of reading an older schema out of localStorage.
+const STORAGE_KEY = 'pathir_live_v4';
 
 function loadStore() {
   try {
@@ -266,15 +268,15 @@ function seed() {
       patient_name: 'Oliver Thompson', phone_number: '+44 7700 900123',
       message: 'I have a terrible toothache on my lower right side. It started yesterday and the pain is getting worse. I need to see someone as soon as possible please.',
       source: 'phone', is_urgent: true, is_completed: false,
-      conversation: [
-        { role: 'agent', message: "Good morning, you've reached Parkview Dental. I'm Ella, how can I help you today?", timestamp: daysAgo(0, 9, 15) },
-        { role: 'patient', message: "Hi, I've got a really bad toothache. It started yesterday and it's getting worse.", timestamp: daysAgo(0, 9, 15) },
-        { role: 'agent', message: "I'm sorry to hear that. Can you tell me which side the pain is on?", timestamp: daysAgo(0, 9, 16) },
-        { role: 'patient', message: "Lower right side. It's throbbing and I can barely eat.", timestamp: daysAgo(0, 9, 16) },
-        { role: 'agent', message: "That sounds uncomfortable. We do have emergency appointments available today. Let me take your details and get you booked in. Could I take your name please?", timestamp: daysAgo(0, 9, 17) },
-        { role: 'patient', message: 'Oliver Thompson.', timestamp: daysAgo(0, 9, 17) },
-        { role: 'agent', message: "Thank you Oliver. I've flagged this as urgent for the team. Someone will call you back shortly to confirm your appointment time.", timestamp: daysAgo(0, 9, 18) },
-        { role: 'patient', message: 'Yes, this is my mobile. Thank you.', timestamp: daysAgo(0, 9, 18) },
+      messages: [
+        { role: 'clinic', message: "Good morning, you've reached Parkview Dental. I'm Ella, how can I help you today?", created_at: daysAgo(0, 9, 15) },
+        { role: 'patient', message: "Hi, I've got a really bad toothache. It started yesterday and it's getting worse.", created_at: daysAgo(0, 9, 15) },
+        { role: 'clinic', message: "I'm sorry to hear that. Can you tell me which side the pain is on?", created_at: daysAgo(0, 9, 16) },
+        { role: 'patient', message: "Lower right side. It's throbbing and I can barely eat.", created_at: daysAgo(0, 9, 16) },
+        { role: 'clinic', message: "That sounds uncomfortable. We do have emergency appointments available today. Let me take your details and get you booked in. Could I take your name please?", created_at: daysAgo(0, 9, 17) },
+        { role: 'patient', message: 'Oliver Thompson.', created_at: daysAgo(0, 9, 17) },
+        { role: 'clinic', message: "Thank you Oliver. I've flagged this as urgent for the team. Someone will call you back shortly to confirm your appointment time.", created_at: daysAgo(0, 9, 18) },
+        { role: 'patient', message: 'Yes, this is my mobile. Thank you.', created_at: daysAgo(0, 9, 18) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(0, 9, 15),
@@ -284,11 +286,11 @@ function seed() {
       patient_name: 'Sophie Williams', phone_number: '+44 7700 900456',
       message: "I'd like to enquire about teeth whitening options and pricing. I have a wedding coming up in about 6 weeks.",
       source: 'chat', is_urgent: false, is_completed: false,
-      conversation: [
-        { role: 'agent', message: 'Hello! Welcome to Parkview Dental. How can I help you today?', timestamp: daysAgo(1, 14, 30) },
-        { role: 'patient', message: "Hi, I'm interested in teeth whitening. I have a wedding in 6 weeks and want my teeth to look great!", timestamp: daysAgo(1, 14, 30) },
-        { role: 'agent', message: "Congratulations on your upcoming wedding! We offer professional teeth whitening from \u00a3350. This includes an in-clinic session and a home whitening kit. Would you like to book a consultation?", timestamp: daysAgo(1, 14, 31) },
-        { role: 'patient', message: 'That sounds good. Can I come in this week for a consultation?', timestamp: daysAgo(1, 14, 31) },
+      messages: [
+        { role: 'clinic', message: 'Hello! Welcome to Parkview Dental. How can I help you today?', created_at: daysAgo(1, 14, 30) },
+        { role: 'patient', message: "Hi, I'm interested in teeth whitening. I have a wedding in 6 weeks and want my teeth to look great!", created_at: daysAgo(1, 14, 30) },
+        { role: 'clinic', message: "Congratulations on your upcoming wedding! We offer professional teeth whitening from \u00a3350. This includes an in-clinic session and a home whitening kit. Would you like to book a consultation?", created_at: daysAgo(1, 14, 31) },
+        { role: 'patient', message: 'That sounds good. Can I come in this week for a consultation?', created_at: daysAgo(1, 14, 31) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(1, 14, 30),
@@ -298,11 +300,11 @@ function seed() {
       patient_name: 'James Hartley', phone_number: '+44 7700 900789',
       message: "Calling to book my 6-monthly check-up. I'm an existing patient \u2014 reference PV-2847.",
       source: 'phone', is_urgent: false, is_completed: true,
-      conversation: [
-        { role: 'agent', message: 'Good afternoon, Parkview Dental, Ella speaking. How can I help?', timestamp: daysAgo(2, 11, 0) },
-        { role: 'patient', message: "Hi, I'd like to book my regular check-up please. I'm James Hartley, patient reference PV-2847.", timestamp: daysAgo(2, 11, 0) },
-        { role: 'agent', message: "Hello James, thanks for calling. I can see your records here. You're due for a check-up and hygiene appointment. Would you like to book both?", timestamp: daysAgo(2, 11, 1) },
-        { role: 'patient', message: 'Yes please, back to back if possible.', timestamp: daysAgo(2, 11, 1) },
+      messages: [
+        { role: 'clinic', message: 'Good afternoon, Parkview Dental, Ella speaking. How can I help?', created_at: daysAgo(2, 11, 0) },
+        { role: 'patient', message: "Hi, I'd like to book my regular check-up please. I'm James Hartley, patient reference PV-2847.", created_at: daysAgo(2, 11, 0) },
+        { role: 'clinic', message: "Hello James, thanks for calling. I can see your records here. You're due for a check-up and hygiene appointment. Would you like to book both?", created_at: daysAgo(2, 11, 1) },
+        { role: 'patient', message: 'Yes please, back to back if possible.', created_at: daysAgo(2, 11, 1) },
       ],
       selected_service: 'General Checkup', appointment_datetime: daysFromNow(3, 10, 0),
       practitioner: 'Dr Sarah Mitchell',
@@ -314,11 +316,11 @@ function seed() {
       patient_name: 'Priya Sharma', phone_number: '+44 7700 900321',
       message: 'My son (age 7) chipped his front tooth at school. Not in pain but the tooth looks damaged. Can we get an appointment this week?',
       source: 'chat', is_urgent: true, is_completed: false,
-      conversation: [
-        { role: 'agent', message: 'Hello, welcome to Parkview Dental. How can I help?', timestamp: daysAgo(0, 15, 45) },
-        { role: 'patient', message: "My 7-year-old chipped his front tooth at school today. He isn't in pain but the tooth looks broken. Can we see someone soon?", timestamp: daysAgo(0, 15, 45) },
-        { role: 'agent', message: "I'm sorry to hear about that. A chipped tooth in a child should be assessed promptly. We can see him this week \u2014 I'll flag this as urgent for the team.", timestamp: daysAgo(0, 15, 46) },
-        { role: 'patient', message: 'Priya Sharma, 07700 900321. His name is Aarush.', timestamp: daysAgo(0, 15, 46) },
+      messages: [
+        { role: 'clinic', message: 'Hello, welcome to Parkview Dental. How can I help?', created_at: daysAgo(0, 15, 45) },
+        { role: 'patient', message: "My 7-year-old chipped his front tooth at school today. He isn't in pain but the tooth looks broken. Can we see someone soon?", created_at: daysAgo(0, 15, 45) },
+        { role: 'clinic', message: "I'm sorry to hear about that. A chipped tooth in a child should be assessed promptly. We can see him this week \u2014 I'll flag this as urgent for the team.", created_at: daysAgo(0, 15, 46) },
+        { role: 'patient', message: 'Priya Sharma, 07700 900321. His name is Aarush.', created_at: daysAgo(0, 15, 46) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(0, 15, 45),
@@ -328,11 +330,11 @@ function seed() {
       patient_name: 'Margaret Collins', phone_number: '+44 7700 900654',
       message: 'Interested in dental implants to replace two missing molars. Would like to know about costs and financing options.',
       source: 'phone', is_urgent: false, is_completed: false,
-      conversation: [
-        { role: 'agent', message: 'Good morning, Parkview Dental. How may I help you today?', timestamp: daysAgo(1, 10, 20) },
-        { role: 'patient', message: "Hello, I'm calling about dental implants. I have two missing teeth at the back and my dentist has suggested implants.", timestamp: daysAgo(1, 10, 20) },
-        { role: 'agent', message: "Our implant consultations are complimentary and include a CT scan. Single implants start from \u00a32,500, and we offer interest-free finance over 12 months.", timestamp: daysAgo(1, 10, 21) },
-        { role: 'patient', message: "Yes, that would be great. I'm available most mornings.", timestamp: daysAgo(1, 10, 22) },
+      messages: [
+        { role: 'clinic', message: 'Good morning, Parkview Dental. How may I help you today?', created_at: daysAgo(1, 10, 20) },
+        { role: 'patient', message: "Hello, I'm calling about dental implants. I have two missing teeth at the back and my dentist has suggested implants.", created_at: daysAgo(1, 10, 20) },
+        { role: 'clinic', message: "Our implant consultations are complimentary and include a CT scan. Single implants start from \u00a32,500, and we offer interest-free finance over 12 months.", created_at: daysAgo(1, 10, 21) },
+        { role: 'patient', message: "Yes, that would be great. I'm available most mornings.", created_at: daysAgo(1, 10, 22) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(1, 10, 20),
@@ -342,7 +344,7 @@ function seed() {
       patient_name: 'David Nguyen', phone_number: '+44 7700 900987',
       message: 'Routine hygiene appointment booking. Existing patient.',
       source: 'phone', is_urgent: false, is_completed: true,
-      conversation: [],
+      messages: [],
       selected_service: 'Teeth Cleaning', appointment_datetime: daysFromNow(1, 14, 30),
       practitioner: 'Ms Emily Chen',
       confirmation_sent: true, confirmation_sent_date: daysAgo(3),
@@ -353,11 +355,11 @@ function seed() {
       patient_name: 'Rachel Evans', phone_number: '+44 7700 900111',
       message: "I'd like to register as a new patient. Just moved to the area.",
       source: 'chat', is_urgent: false, is_completed: false,
-      conversation: [
-        { role: 'agent', message: 'Welcome to Parkview Dental! How can I help you today?', timestamp: daysAgo(0, 11, 0) },
-        { role: 'patient', message: "Hi, I've just moved to the area and looking for a new dentist. Do you accept new patients?", timestamp: daysAgo(0, 11, 0) },
-        { role: 'agent', message: "Absolutely, we're always happy to welcome new patients. A new patient examination is \u00a365 and includes X-rays.", timestamp: daysAgo(0, 11, 1) },
-        { role: 'patient', message: 'Yes please!', timestamp: daysAgo(0, 11, 1) },
+      messages: [
+        { role: 'clinic', message: 'Welcome to Parkview Dental! How can I help you today?', created_at: daysAgo(0, 11, 0) },
+        { role: 'patient', message: "Hi, I've just moved to the area and looking for a new dentist. Do you accept new patients?", created_at: daysAgo(0, 11, 0) },
+        { role: 'clinic', message: "Absolutely, we're always happy to welcome new patients. A new patient examination is \u00a365 and includes X-rays.", created_at: daysAgo(0, 11, 1) },
+        { role: 'patient', message: 'Yes please!', created_at: daysAgo(0, 11, 1) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(0, 11, 0),
@@ -367,7 +369,7 @@ function seed() {
       patient_name: 'Tom Bradley', phone_number: '+44 7911 123456',
       message: 'Need to book a filling appointment.',
       source: 'phone', is_urgent: false, is_completed: false,
-      conversation: [],
+      messages: [],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(1, 9, 30),
     },
@@ -377,11 +379,11 @@ function seed() {
       patient_name: 'Ciara O\'Brien', phone_number: '+44 7812 345678',
       message: 'My crown has come loose while eating. It\'s not painful but feels very wobbly. Can someone see me today?',
       source: 'phone', is_urgent: true, is_completed: false,
-      conversation: [
-        { role: 'agent', message: 'Good morning, Antrim House Dental. How can I help?', timestamp: daysAgo(0, 10, 5) },
-        { role: 'patient', message: 'Hi, my crown came off while I was eating breakfast. It\'s still attached but really wobbly.', timestamp: daysAgo(0, 10, 5) },
-        { role: 'agent', message: 'I\'m sorry about that. We can fit you in today as an emergency. Can I take your name?', timestamp: daysAgo(0, 10, 6) },
-        { role: 'patient', message: 'Ciara O\'Brien. I\'m an existing patient.', timestamp: daysAgo(0, 10, 6) },
+      messages: [
+        { role: 'clinic', message: 'Good morning, Antrim House Dental. How can I help?', created_at: daysAgo(0, 10, 5) },
+        { role: 'patient', message: 'Hi, my crown came off while I was eating breakfast. It\'s still attached but really wobbly.', created_at: daysAgo(0, 10, 5) },
+        { role: 'clinic', message: 'I\'m sorry about that. We can fit you in today as an emergency. Can I take your name?', created_at: daysAgo(0, 10, 6) },
+        { role: 'patient', message: 'Ciara O\'Brien. I\'m an existing patient.', created_at: daysAgo(0, 10, 6) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(0, 10, 5),
@@ -391,10 +393,10 @@ function seed() {
       patient_name: 'Sean Murphy', phone_number: '+44 7823 456789',
       message: 'Looking to get Invisalign. Heard you do a free consultation?',
       source: 'chat', is_urgent: false, is_completed: false,
-      conversation: [
-        { role: 'agent', message: 'Hello! Welcome to Antrim House Dental. How can I help today?', timestamp: daysAgo(1, 16, 0) },
-        { role: 'patient', message: 'Hi, I\'m interested in Invisalign. Do you offer it and is there a free consult?', timestamp: daysAgo(1, 16, 0) },
-        { role: 'agent', message: 'Yes, we do offer Invisalign and your initial consultation is complimentary. Shall I book you in?', timestamp: daysAgo(1, 16, 1) },
+      messages: [
+        { role: 'clinic', message: 'Hello! Welcome to Antrim House Dental. How can I help today?', created_at: daysAgo(1, 16, 0) },
+        { role: 'patient', message: 'Hi, I\'m interested in Invisalign. Do you offer it and is there a free consult?', created_at: daysAgo(1, 16, 0) },
+        { role: 'clinic', message: 'Yes, we do offer Invisalign and your initial consultation is complimentary. Shall I book you in?', created_at: daysAgo(1, 16, 1) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(1, 16, 0),
@@ -404,7 +406,7 @@ function seed() {
       patient_name: 'Maeve Donovan', phone_number: '+44 7834 567890',
       message: 'Routine check-up for myself and my two children (ages 10 and 13).',
       source: 'phone', is_urgent: false, is_completed: true,
-      conversation: [],
+      messages: [],
       selected_service: 'General Checkup', appointment_datetime: daysFromNow(5, 9, 30),
       practitioner: 'Dr Fiona McAllister',
       confirmation_sent: true, confirmation_sent_date: daysAgo(1, 14, 0),
@@ -416,10 +418,10 @@ function seed() {
       patient_name: 'Liam Foster', phone_number: '+44 7745 678901',
       message: 'Interested in composite bonding for my front teeth. Have a slight gap I\'d like closed.',
       source: 'chat', is_urgent: false, is_completed: false,
-      conversation: [
-        { role: 'agent', message: 'Welcome to Sparkling Dental! How can we help you today?', timestamp: daysAgo(0, 13, 20) },
-        { role: 'patient', message: 'Hi, I\'ve got a gap between my two front teeth and want to know about bonding options.', timestamp: daysAgo(0, 13, 20) },
-        { role: 'agent', message: 'Composite bonding is a great option for closing gaps. It starts from \u00a3350 per tooth and is done in a single visit. Would you like to book a consultation with Dr Hassan?', timestamp: daysAgo(0, 13, 21) },
+      messages: [
+        { role: 'clinic', message: 'Welcome to Sparkling Dental! How can we help you today?', created_at: daysAgo(0, 13, 20) },
+        { role: 'patient', message: 'Hi, I\'ve got a gap between my two front teeth and want to know about bonding options.', created_at: daysAgo(0, 13, 20) },
+        { role: 'clinic', message: 'Composite bonding is a great option for closing gaps. It starts from \u00a3350 per tooth and is done in a single visit. Would you like to book a consultation with Dr Hassan?', created_at: daysAgo(0, 13, 21) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(0, 13, 20),
@@ -429,10 +431,10 @@ function seed() {
       patient_name: 'Emma Richardson', phone_number: '+44 7756 789012',
       message: 'Want to book the Zoom whitening. Getting married in 4 weeks!',
       source: 'phone', is_urgent: false, is_completed: false,
-      conversation: [
-        { role: 'agent', message: 'Hi, Sparkling Dental, how can I help?', timestamp: daysAgo(0, 11, 45) },
-        { role: 'patient', message: 'Hi! I\'m getting married in 4 weeks and really want the Zoom whitening. Is that enough time?', timestamp: daysAgo(0, 11, 45) },
-        { role: 'agent', message: 'Congratulations! Yes, 4 weeks is perfect. The Zoom treatment is \u00a3450 and includes an in-chair session plus a home top-up kit. Shall I book you in?', timestamp: daysAgo(0, 11, 46) },
+      messages: [
+        { role: 'clinic', message: 'Hi, Sparkling Dental, how can I help?', created_at: daysAgo(0, 11, 45) },
+        { role: 'patient', message: 'Hi! I\'m getting married in 4 weeks and really want the Zoom whitening. Is that enough time?', created_at: daysAgo(0, 11, 45) },
+        { role: 'clinic', message: 'Congratulations! Yes, 4 weeks is perfect. The Zoom treatment is \u00a3450 and includes an in-chair session plus a home top-up kit. Shall I book you in?', created_at: daysAgo(0, 11, 46) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(0, 11, 45),
@@ -443,11 +445,11 @@ function seed() {
       patient_name: 'Victoria Chen-Ramirez', phone_number: '+44 7867 890123',
       message: 'Interested in a full smile makeover. I\'ve seen your work on Instagram and would love a consultation.',
       source: 'chat', is_urgent: false, is_completed: false,
-      conversation: [
-        { role: 'agent', message: 'Welcome to Designer Smiles on Harley Street. How may I assist you?', timestamp: daysAgo(0, 14, 0) },
-        { role: 'patient', message: 'Hi, I\'ve been following your Instagram and I love the smile transformations. I\'d like to book a smile makeover consultation.', timestamp: daysAgo(0, 14, 0) },
-        { role: 'agent', message: 'Thank you! We\'d love to help you. Our complimentary smile makeover consultation includes a digital smile design preview so you can see your potential results. Dr Petrov has availability next week.', timestamp: daysAgo(0, 14, 1) },
-        { role: 'patient', message: 'That sounds amazing. Yes please, any morning works for me.', timestamp: daysAgo(0, 14, 1) },
+      messages: [
+        { role: 'clinic', message: 'Welcome to Designer Smiles on Harley Street. How may I assist you?', created_at: daysAgo(0, 14, 0) },
+        { role: 'patient', message: 'Hi, I\'ve been following your Instagram and I love the smile transformations. I\'d like to book a smile makeover consultation.', created_at: daysAgo(0, 14, 0) },
+        { role: 'clinic', message: 'Thank you! We\'d love to help you. Our complimentary smile makeover consultation includes a digital smile design preview so you can see your potential results. Dr Petrov has availability next week.', created_at: daysAgo(0, 14, 1) },
+        { role: 'patient', message: 'That sounds amazing. Yes please, any morning works for me.', created_at: daysAgo(0, 14, 1) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(0, 14, 0),
@@ -457,11 +459,11 @@ function seed() {
       patient_name: 'Alexander Hughes', phone_number: '+44 7878 901234',
       message: 'Need to replace 3 missing teeth with implants. Want the best option available.',
       source: 'phone', is_urgent: false, is_completed: false,
-      conversation: [
-        { role: 'agent', message: 'Good afternoon, Designer Smiles Harley Street. How can I help?', timestamp: daysAgo(1, 15, 30) },
-        { role: 'patient', message: 'Hello, I have 3 missing teeth and I\'ve been told implants are the best solution. I want the premium option.', timestamp: daysAgo(1, 15, 30) },
-        { role: 'agent', message: 'Absolutely. Dr Petrov specialises in implant-supported restorations using Straumann implants. A single premium implant is \u00a33,500. For multiple implants we can discuss a tailored plan. Shall I book a CT scan and consultation?', timestamp: daysAgo(1, 15, 31) },
-        { role: 'patient', message: 'Yes, please. Cost isn\'t an issue, I just want the best result.', timestamp: daysAgo(1, 15, 32) },
+      messages: [
+        { role: 'clinic', message: 'Good afternoon, Designer Smiles Harley Street. How can I help?', created_at: daysAgo(1, 15, 30) },
+        { role: 'patient', message: 'Hello, I have 3 missing teeth and I\'ve been told implants are the best solution. I want the premium option.', created_at: daysAgo(1, 15, 30) },
+        { role: 'clinic', message: 'Absolutely. Dr Petrov specialises in implant-supported restorations using Straumann implants. A single premium implant is \u00a33,500. For multiple implants we can discuss a tailored plan. Shall I book a CT scan and consultation?', created_at: daysAgo(1, 15, 31) },
+        { role: 'patient', message: 'Yes, please. Cost isn\'t an issue, I just want the best result.', created_at: daysAgo(1, 15, 32) },
       ],
       selected_service: null, appointment_datetime: null, confirmation_sent: false,
       created_date: daysAgo(1, 15, 30),
@@ -471,7 +473,7 @@ function seed() {
       patient_name: 'Isabella Morgan', phone_number: '+44 7889 012345',
       message: 'Invisalign enquiry for my 16-year-old daughter.',
       source: 'phone', is_urgent: false, is_completed: true,
-      conversation: [],
+      messages: [],
       selected_service: 'Invisalign', appointment_datetime: daysFromNow(2, 11, 0),
       practitioner: 'Dr Marcus Wright',
       confirmation_sent: true, confirmation_sent_date: daysAgo(2, 10, 0),

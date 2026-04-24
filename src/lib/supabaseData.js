@@ -413,8 +413,11 @@ export async function listEnquiries(practiceId, sortField) {
     .select(`
       *,
       linked_conversations:conversations!enquiry_id (
-        id, summary, transcript, status, outcome, duration_seconds,
+        id, summary, status, outcome, duration_seconds,
         started_at, ended_at, channel
+      ),
+      messages:enquiry_messages!enquiry_id (
+        id, role, message, channel, created_at
       )
     `)
     .eq('practice_id', practiceId);
@@ -432,27 +435,42 @@ export async function listEnquiries(practiceId, sortField) {
 
   return (data || []).map(e => {
     const linked = e.linked_conversations?.[0];
+    const messages = (e.messages || [])
+      .slice()
+      .sort((a, b) => new Date(a.created_at) - new Date(b.created_at));
     return {
       ...e,
       conversation_summary: linked?.summary || null,
-      conversation_transcript: linked?.transcript || null,
       conversation_status: linked?.status || null,
       conversation_outcome: linked?.outcome || null,
       conversation_duration: linked?.duration_seconds || null,
-      conversation: (e.conversation && e.conversation.length > 0)
-        ? e.conversation
-        : linked?.transcript
-          ? linked.transcript.map(m => ({
-              role: /^(user|patient)$/i.test(m.role) ? 'patient' : 'clinic',
-              message: m.content || m.message || m.text || '',
-              timestamp: typeof m.timestamp === 'number'
-                ? new Date((linked.started_at ? new Date(linked.started_at).getTime() : Date.now()) + m.timestamp * 1000).toISOString()
-                : m.timestamp || null,
-            }))
-          : [],
+      messages,
       linked_conversations: undefined,
     };
   });
+}
+
+/**
+ * Subscribe to new messages landing against any enquiry for this practice.
+ * onInsert receives the raw row ({id, enquiry_id, role, message, channel,
+ * created_at}). Returns an unsubscribe function.
+ *
+ * The filter is practice-scoped via the RLS policy on enquiry_messages —
+ * the subscriber only sees messages whose enquiry belongs to a practice
+ * this user owns.
+ */
+export function subscribeToEnquiryMessages(practiceId, onInsert) {
+  const channel = supabase
+    .channel(`enquiry-messages-${practiceId}`)
+    .on(
+      'postgres_changes',
+      { event: 'INSERT', schema: 'public', table: 'enquiry_messages' },
+      (payload) => {
+        onInsert(payload.new);
+      },
+    )
+    .subscribe();
+  return () => supabase.removeChannel(channel);
 }
 
 export async function createEnquiry(enquiryData) {

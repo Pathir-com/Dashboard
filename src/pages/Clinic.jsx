@@ -410,60 +410,40 @@ export default function Clinic() {
                                 </div>
                               </AccordionTrigger>
                               <AccordionContent className="bg-slate-50 rounded-lg p-4 max-h-96 overflow-y-auto mt-1">
-                                {(() => {
-                                  // Prefer inline conversation array, fall back to joined transcript
-                                  let messages = enquiry.conversation;
-                                  if ((!messages || messages.length === 0) && enquiry.conversation_transcript) {
-                                    const raw = enquiry.conversation_transcript;
-                                    const arr = Array.isArray(raw) ? raw : (() => {
-                                      try { return typeof raw === 'string' && raw.trim().startsWith('[') ? JSON.parse(raw) : null; } catch { return null; }
-                                    })();
-                                    if (Array.isArray(arr)) {
-                                      messages = arr.map(m => ({
-                                        role: /^(user|patient|human|customer)$/i.test(m.role || m.sender || '') ? 'patient' : 'agent',
-                                        message: m.text || m.message || m.content || '',
-                                        timestamp: m.timestamp || m.time || null,
-                                      }));
-                                    }
-                                  }
-                                  if (messages && messages.length > 0) {
-                                    return (
-                                      <div className="space-y-3">
-                                        {messages.map((msg, idx) => (
-                                          <div
-                                            key={idx}
-                                            className={`flex ${msg.role === 'patient' || msg.role === 'user' ? 'justify-end' : 'justify-start'}`}
-                                          >
-                                            <div className={`
-                                              max-w-[80%] rounded-2xl px-4 py-2.5
-                                              ${msg.role === 'patient' || msg.role === 'user'
-                                                ? 'bg-blue-600 text-white'
-                                                : 'bg-white text-slate-700 border border-slate-200'
-                                              }
+                                {enquiry.messages && enquiry.messages.length > 0 ? (
+                                  <div className="space-y-3">
+                                    {enquiry.messages.map((msg) => (
+                                      <div
+                                        key={msg.id}
+                                        className={`flex ${msg.role === 'patient' ? 'justify-end' : 'justify-start'}`}
+                                      >
+                                        <div className={`
+                                          max-w-[80%] rounded-2xl px-4 py-2.5
+                                          ${msg.role === 'patient'
+                                            ? 'bg-blue-600 text-white'
+                                            : 'bg-white text-slate-700 border border-slate-200'
+                                          }
+                                        `}>
+                                          <p className="text-sm leading-relaxed whitespace-pre-wrap">
+                                            {msg.message}
+                                          </p>
+                                          {msg.created_at && (
+                                            <p className={`
+                                              text-xs mt-1
+                                              ${msg.role === 'patient' ? 'text-blue-100' : 'text-slate-400'}
                                             `}>
-                                              <p className="text-sm leading-relaxed whitespace-pre-wrap">
-                                                {msg.message || msg.text || ''}
-                                              </p>
-                                              {msg.timestamp && (
-                                                <p className={`
-                                                  text-xs mt-1
-                                                  ${msg.role === 'patient' || msg.role === 'user' ? 'text-blue-100' : 'text-slate-400'}
-                                                `}>
-                                                  {format(new Date(msg.timestamp), 'h:mm a')}
-                                                </p>
-                                              )}
-                                            </div>
-                                          </div>
-                                        ))}
+                                              {format(new Date(msg.created_at), 'h:mm a')}
+                                            </p>
+                                          )}
+                                        </div>
                                       </div>
-                                    );
-                                  }
-                                  return (
-                                    <p className="text-sm text-slate-400 text-center py-4">
-                                      No conversation recorded
-                                    </p>
-                                  );
-                                })()}
+                                    ))}
+                                  </div>
+                                ) : (
+                                  <p className="text-sm text-slate-400 text-center py-4">
+                                    No conversation recorded
+                                  </p>
+                                )}
                               </AccordionContent>
                             </AccordionItem>
 

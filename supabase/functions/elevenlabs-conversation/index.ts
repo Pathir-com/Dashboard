@@ -2,22 +2,27 @@
  * Purpose:
  *   ElevenLabs post-conversation webhook handler. Fires when a phone call
  *   or web chat session ends. Stores the transcript, AI-generated summary,
- *   and outcome classification in the conversations table for RAG retrieval.
+ *   and outcome classification in the conversations table for RAG retrieval,
+ *   and appends every transcript turn to enquiry_messages so the dashboard
+ *   shows the full conversation with the same shape as SMS/Meta channels.
  *
  * Dependencies:
  *   - @supabase/supabase-js
  *   - _shared/cors.ts
- *   - conversations table (005_conversations.sql)
+ *   - _shared/conversation.ts (insertMessages)
  *
  * Used by:
  *   - ElevenLabs agent webhook (post-call URL)
  *
  * Changes:
+ *   2026-04-24: Write transcript turns as enquiry_messages rows instead of
+ *               the conversation JSONB array.
  *   2026-03-11: Initial creation — transcript + summary storage.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { insertMessages } from "../_shared/conversation.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -181,9 +186,9 @@ Deno.serve(async (req) => {
       }
     }
 
-    /* Also update the linked enquiry so the dashboard shows the conversation
-       and summary. The dashboard reads enquiries.conversation (JSONB array of
-       {role, message, timestamp}) and enquiries.message for the summary text. */
+    /* Also update the linked enquiry so the dashboard shows the transcript
+       and summary. Transcript rows go into enquiry_messages (one row per
+       turn); summary text goes into enquiries.message. */
     if (existing) {
       const { data: conv } = await db
         .from("conversations")
@@ -192,34 +197,37 @@ Deno.serve(async (req) => {
         .single();
 
       if (conv?.enquiry_id) {
-        // Convert transcript to the format the dashboard expects:
-        // [{role: 'patient'|'clinic', message: '...', timestamp: '...'}]
-        const dashboardConversation = formattedTranscript.map((t: {
+        const startMs = metadata.start_time
+          ? new Date(metadata.start_time).getTime()
+          : Date.now();
+
+        const rows = formattedTranscript.map((t: {
           role: string; content: string; timestamp: number;
-        }) => ({
-          role: t.role === "user" ? "patient" : "clinic",
+        }, idx: number) => ({
+          enquiryId: conv.enquiry_id as string,
+          role: (t.role === "user" ? "patient" : "clinic") as "patient" | "clinic",
           message: t.content,
-          timestamp: new Date(
-            (metadata.start_time ? new Date(metadata.start_time).getTime() : Date.now())
-            + (t.timestamp || 0) * 1000
-          ).toISOString(),
+          channel: "phone",
+          // Use the ConvAI conversation id + turn index so re-deliveries of
+          // the same webhook are idempotent against the partial unique index.
+          providerMessageId: `${conversationId}:${idx}`,
+          createdAt: new Date(startMs + (t.timestamp || 0) * 1000).toISOString(),
         }));
 
-        const enquiryUpdate: Record<string, unknown> = {
-          conversation: dashboardConversation,
-        };
-        // Only update message if there's no appointment already set
-        // (request_appointment sets a more specific message)
+        if (rows.length > 0) {
+          await insertMessages(db, rows);
+        }
+
+        // Only update enquiry summary text if there's no appointment already set
+        // (request_appointment sets a more specific message).
         if (summary) {
           const { data: enq } = await db
             .from("enquiries").select("appointment_status")
             .eq("id", conv.enquiry_id).single();
           if (!enq?.appointment_status) {
-            enquiryUpdate.message = summary;
+            await db.from("enquiries").update({ message: summary }).eq("id", conv.enquiry_id);
           }
         }
-
-        await db.from("enquiries").update(enquiryUpdate).eq("id", conv.enquiry_id);
       }
     }
 
