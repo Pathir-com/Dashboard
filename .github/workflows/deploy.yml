@@ -4,6 +4,11 @@ on:
   push:
     branches: [main]
   workflow_dispatch:
+    inputs:
+      deploy_all:
+        description: "Deploy every edge function and run every migration, ignoring git diff"
+        type: boolean
+        default: false
 
 permissions:
   contents: read
@@ -87,24 +92,33 @@ jobs:
             echo "No secrets to sync (none set in GitHub)."
           fi
 
-      # Deploy every edge function whose directory changed in this push
+      # Deploy every edge function whose directory changed in this push.
+      # Manual workflow_dispatch with deploy_all=true overrides the diff and
+      # deploys everything — useful when a previous deploy missed files (e.g.
+      # after history rewrites or initial bootstrap).
       - name: Deploy changed edge functions
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           PUSH_BEFORE: ${{ github.event.before }}
+          DEPLOY_ALL: ${{ inputs.deploy_all }}
         run: |
           PROJECT_REF="amxcposgqlmgapzoopze"
 
-          # Diff against the commit main was at BEFORE this push (covers
-          # multi-commit pushes — HEAD~1 would miss the earlier commits).
-          BEFORE="$PUSH_BEFORE"
-          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            BEFORE="HEAD~1"  # fallback for initial push
+          if [ "$DEPLOY_ALL" = "true" ]; then
+            # Force-deploy every function + every shared module as "changed"
+            CHANGED=$(find supabase/functions -type f -name "*.ts" 2>/dev/null)
+            echo "Manual deploy_all=true — deploying every function."
+          else
+            # Diff against the commit main was at BEFORE this push (covers
+            # multi-commit pushes — HEAD~1 would miss the earlier commits).
+            BEFORE="$PUSH_BEFORE"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              BEFORE="HEAD~1"  # fallback for initial push
+            fi
+            CHANGED=$(git diff --name-only "$BEFORE" HEAD 2>/dev/null || echo "")
+            echo "Comparing $BEFORE..HEAD"
           fi
-          CHANGED=$(git diff --name-only "$BEFORE" HEAD 2>/dev/null || echo "")
-          echo "Comparing $BEFORE..HEAD"
 
-          # Also detect new untracked function dirs (first push)
           for fn_dir in supabase/functions/*/index.ts; do
             fn_name=$(echo "$fn_dir" | sed 's|supabase/functions/||; s|/index.ts||')
 
@@ -132,13 +146,18 @@ jobs:
         env:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           PUSH_BEFORE: ${{ github.event.before }}
+          DEPLOY_ALL: ${{ inputs.deploy_all }}
         run: |
           PROJECT_REF="amxcposgqlmgapzoopze"
-          BEFORE="$PUSH_BEFORE"
-          if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
-            BEFORE="HEAD~1"
+          if [ "$DEPLOY_ALL" = "true" ]; then
+            CHANGED=$(find supabase/migrations -type f -name "*.sql" 2>/dev/null)
+          else
+            BEFORE="$PUSH_BEFORE"
+            if [ -z "$BEFORE" ] || [ "$BEFORE" = "0000000000000000000000000000000000000000" ]; then
+              BEFORE="HEAD~1"
+            fi
+            CHANGED=$(git diff --name-only "$BEFORE" HEAD 2>/dev/null || echo "")
           fi
-          CHANGED=$(git diff --name-only "$BEFORE" HEAD 2>/dev/null || echo "")
 
           for sql_file in $(echo "$CHANGED" | grep '^supabase/migrations/.*\.sql$' | sort); do
             if [ -f "$sql_file" ]; then
