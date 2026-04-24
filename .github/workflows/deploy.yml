@@ -63,6 +63,30 @@ jobs:
         with:
           version: latest
 
+      # Sync edge-function secrets from GitHub Actions secrets.
+      # Skips any whose GH secret is empty so half-configured providers don't
+      # blank an existing good value in Supabase.
+      - name: Sync edge function secrets
+        env:
+          SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
+          TEXTMAGIC_USERNAME: ${{ secrets.TEXTMAGIC_USERNAME }}
+          TEXTMAGIC_API_KEY: ${{ secrets.TEXTMAGIC_API_KEY }}
+        run: |
+          PROJECT_REF="amxcposgqlmgapzoopze"
+          PAIRS=()
+          if [ -n "$TEXTMAGIC_USERNAME" ]; then
+            PAIRS+=("TEXTMAGIC_USERNAME=$TEXTMAGIC_USERNAME")
+          fi
+          if [ -n "$TEXTMAGIC_API_KEY" ]; then
+            PAIRS+=("TEXTMAGIC_API_KEY=$TEXTMAGIC_API_KEY")
+          fi
+          if [ ${#PAIRS[@]} -gt 0 ]; then
+            supabase secrets set "${PAIRS[@]}" --project-ref "$PROJECT_REF"
+            echo "Synced ${#PAIRS[@]} secret(s) to Supabase."
+          else
+            echo "No secrets to sync (none set in GitHub)."
+          fi
+
       # Deploy every edge function whose directory changed in this push
       - name: Deploy changed edge functions
         env:
