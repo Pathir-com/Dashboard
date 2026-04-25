@@ -41,10 +41,11 @@ Deno.serve(async (req) => {
     let practice: any = null;
     let resolvedPracticeId: string | null = null;
 
+    const PRACTICE_COLS = "id, name, industry, address, phone, email, website, practice_type, opening_hours, holiday_hours, practitioners, price_list, usps, practice_plan, clinic_guidelines, agent_tone";
     if (practiceId) {
       const { data } = await adminClient
         .from("practices")
-        .select("id, name, address, phone, email, website, practice_type, opening_hours, holiday_hours, practitioners, price_list, usps, practice_plan, clinic_guidelines, agent_tone")
+        .select(PRACTICE_COLS)
         .eq("id", practiceId)
         .single();
       practice = data;
@@ -52,7 +53,7 @@ Deno.serve(async (req) => {
     } else if (domain) {
       const { data } = await adminClient
         .from("practices")
-        .select("id, name, address, phone, email, website, practice_type, opening_hours, holiday_hours, practitioners, price_list, usps, practice_plan, clinic_guidelines, agent_tone")
+        .select(PRACTICE_COLS)
         .ilike("website", `%${domain}%`)
         .limit(1)
         .single();
@@ -65,6 +66,20 @@ Deno.serve(async (req) => {
         status: 404,
         headers: { ...corsHeaders, "Content-Type": "application/json" },
       });
+    }
+
+    // Vertical-aware persona name. Used when formatting prior conversation
+    // history for the agent so transcripts read naturally for the
+    // practice's vertical (e.g. 'Hannah' for hair_transplant, 'Poppy' for
+    // dental). Falls back to 'Poppy' if the template lookup fails.
+    let personaName = "Poppy";
+    if (practice.industry) {
+      const { data: tpl } = await adminClient
+        .from("industry_templates")
+        .select("agent_persona_name")
+        .eq("id", practice.industry)
+        .single();
+      if (tpl?.agent_persona_name) personaName = tpl.agent_persona_name;
     }
 
     // 2. Format practice context
@@ -146,7 +161,7 @@ Deno.serve(async (req) => {
           // deno-lint-ignore no-explicit-any
           const transcript = ((e as any).messages || [])
             // deno-lint-ignore no-explicit-any
-            .map((m: any) => `  ${m.role === "clinic" ? "Poppy" : contact.name}: ${m.message}`)
+            .map((m: any) => `  ${m.role === "clinic" ? personaName : contact.name}: ${m.message}`)
             .join("\n");
 
           return `[${date} at ${time} via ${label}]\nSummary: ${e.message}\nStatus: ${e.is_completed ? "Completed" : "Open"}\nFull conversation:\n${transcript || "  (no transcript)"}`;

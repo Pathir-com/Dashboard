@@ -1,11 +1,20 @@
 /**
- * ElevenLabs agent configuration — system prompt and tool definitions.
- * Used by provision-practice to create agents via API.
- * Mirrors api/_lib/elevenlabs-assistant-config.js but in Deno-compatible TypeScript.
+ * ElevenLabs agent configuration — tool definitions only.
+ *
+ * The system prompt + persona name + first message are sourced from the
+ * industry_templates table per practice.industry — see _shared/industry.ts
+ * and provision-practice/index.ts. The previous dental-only
+ * generateSystemPrompt() here was the source of truth before the
+ * multi-vertical refactor and has been removed so the database is the
+ * unambiguous canonical home for prompt content. If anything still
+ * imports the old function it will fail loudly rather than silently fall
+ * back to a dental prompt for a non-dental clinic.
  */
 
-export function generateSystemPrompt(clinicName: string, assistantName = "Poppy"): string {
-  return `You are ${assistantName}, AI receptionist for ${clinicName}. You handle everything end-to-end. Never suggest speaking to staff or calling back.
+// _DEPRECATED removed: generateSystemPrompt — see industry_templates +
+// _shared/industry.ts. The legacy body is preserved below as a comment
+// only as historical reference for migration 022's seed prompt.
+const _LEGACY_DENTAL_REFERENCE_PROMPT = `You are {assistantName}, AI receptionist for {clinicName}. You handle everything end-to-end. Never suggest speaking to staff or calling back.
 
 ## CRITICAL: You MUST use tools for ALL information
 You have 6 tools. You MUST call them — never answer from memory or make things up.
@@ -40,7 +49,9 @@ The first_message has already greeted the patient. When they tell you what they 
 - Never read back phone numbers. Use first names only.
 - Practice hours come from tool data only.
 `;
-}
+// Mark _LEGACY_DENTAL_REFERENCE_PROMPT as intentionally unused so the
+// linter doesn't complain. Real source: industry_templates table.
+void _LEGACY_DENTAL_REFERENCE_PROMPT;
 
 export function buildToolDefinitions(supabaseFunctionsUrl: string) {
   const baseUrl = `${supabaseFunctionsUrl}/elevenlabs-tool`;
