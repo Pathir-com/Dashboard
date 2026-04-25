@@ -1,7 +1,7 @@
 import React, { useState, useEffect } from 'react';
 import { useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
-import { createPractice } from '@/lib/supabaseData';
+import { createPractice, getMyPractice } from '@/lib/supabaseData';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
 
@@ -22,6 +22,28 @@ export default function Onboarding() {
   const navigate = useNavigate();
   const [step, setStep] = useState(1);
   const [loading, setLoading] = useState(false);
+  const [checkingExistingPractice, setCheckingExistingPractice] = useState(true);
+
+  /* Guard: if this user already owns a practice, get them out of the
+     onboarding form. They might land here from a stale URL, a bookmark,
+     a browser back-button, or DashboardRedirect's react-query cache
+     returning null before its first refetch lands. The DB is the source
+     of truth — query it directly on mount and redirect. */
+  useEffect(() => {
+    if (!user) { setCheckingExistingPractice(false); return; }
+    let cancelled = false;
+    getMyPractice()
+      .then((existing) => {
+        if (cancelled) return;
+        if (existing?.id) {
+          navigate(`/Clinic?id=${existing.id}`, { replace: true });
+        } else {
+          setCheckingExistingPractice(false);
+        }
+      })
+      .catch(() => { if (!cancelled) setCheckingExistingPractice(false); });
+    return () => { cancelled = true; };
+  }, [user, navigate]);
 
   // Pre-fill clinic name from auth metadata (if entered during signup)
   const savedDraft = (() => {
@@ -87,6 +109,16 @@ export default function Onboarding() {
       setLoading(false);
     }
   };
+
+  // Hold the form behind the existing-practice check so a stale arrival
+  // doesn't render the empty form for a user who actually has a clinic.
+  if (checkingExistingPractice) {
+    return (
+      <div className="fixed inset-0 flex items-center justify-center">
+        <div className="w-8 h-8 border-4 border-slate-200 border-t-slate-800 rounded-full animate-spin"></div>
+      </div>
+    );
+  }
 
   return (
     <div className="min-h-screen bg-slate-50 flex items-center justify-center px-4 py-12">
