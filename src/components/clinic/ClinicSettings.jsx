@@ -154,7 +154,7 @@ export default function ClinicSettings({ practice, onUpdate, activeTab, onTabCha
             <TeamTab practitioners={practitioners} setPractitioners={setPractitioners} />
           )}
           {activeTab === 'pricing' && (
-            <PricingTab priceList={priceList} setPriceList={setPriceList} />
+            <PricingTab priceList={priceList} setPriceList={setPriceList} practice={practice} />
           )}
           {activeTab === 'info' && (
             <PracticeInfoTab

@@ -22,18 +22,52 @@
  *   2026-03-09: Initial creation.
  */
 
-import React, { useState } from 'react';
+import React, { useState, useEffect } from 'react';
 import { Input } from '@/components/ui/input';
 import { Label } from '@/components/ui/label';
 import { Switch } from '@/components/ui/switch';
 import { Phone, Mail, Copy, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
+import { supabase } from '@/lib/supabase';
 import HolidayHours from './HolidayHours';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
 export default function ClinicDetailsTab({ details, setDetails, hours, setHours, holidayHours, setHolidayHours, integrations, practiceType, setPracticeType, practice }) {
   const [aiPhoneCopied, setAiPhoneCopied] = useState(false);
+
+  /* ── Treatment categories (verticals) come from industry_templates.
+        Database is the source of truth — adding a new vertical means
+        inserting one row server-side, no code change here. ── */
+  const [industries, setIndustries] = useState([]);
+  const currentIndustry = practice?.industry || details.industry || 'dental';
+
+  useEffect(() => {
+    let cancelled = false;
+    supabase
+      .from('industry_templates')
+      .select('id, display_name')
+      .order('display_name')
+      .then(({ data }) => {
+        if (cancelled) return;
+        if (data && data.length) setIndustries(data);
+      });
+    return () => { cancelled = true; };
+  }, []);
+
+  const handleIndustryChange = async (next) => {
+    setDetails({ ...details, industry: next });
+    if (!practice?.id) return;
+    const { error } = await supabase
+      .from('practices')
+      .update({ industry: next })
+      .eq('id', practice.id);
+    if (error) {
+      toast.error('Could not update treatment category');
+      return;
+    }
+    toast.success('Treatment category updated. The AI agent will use the new vertical on its next refresh.');
+  };
 
   const updateHour = (index, field, value) => {
     setHours(prev => prev.map((h, i) => i === index ? { ...h, [field]: value } : h));
@@ -45,9 +79,32 @@ export default function ClinicDetailsTab({ details, setDetails, hours, setHours,
       <section>
         <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Clinic Details</h2>
         <div className="bg-white rounded-xl border border-slate-100 p-6 space-y-5">
-          <div className="mb-4">
-            <Label className="text-slate-600">Clinic Name</Label>
-            <Input value={details.name} onChange={e => setDetails({ ...details, name: e.target.value })} placeholder="My Dental Clinic" className="mt-1.5" />
+          <div className="grid grid-cols-1 md:grid-cols-2 gap-4 mb-4">
+            <div>
+              <Label className="text-slate-600">Clinic Name</Label>
+              <Input
+                value={details.name}
+                onChange={e => setDetails({ ...details, name: e.target.value })}
+                placeholder="My Clinic"
+                className="mt-1.5"
+              />
+            </div>
+            <div>
+              <Label className="text-slate-600">Treatment Category</Label>
+              <select
+                value={currentIndustry}
+                onChange={e => handleIndustryChange(e.target.value)}
+                className="mt-1.5 flex h-9 w-full rounded-md border border-input bg-transparent px-3 py-1 text-sm shadow-sm focus-visible:outline-none focus-visible:ring-1 focus-visible:ring-ring"
+              >
+                {industries.length === 0 && (
+                  <option value={currentIndustry}>{currentIndustry}</option>
+                )}
+                {industries.map(i => (
+                  <option key={i.id} value={i.id}>{i.display_name}</option>
+                ))}
+              </select>
+              <p className="mt-1 text-xs text-slate-400">Drives the AI agent prompt, default services, role labels, and patient-facing copy.</p>
+            </div>
           </div>
           <div className="grid grid-cols-2 gap-4">
             <div>
