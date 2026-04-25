@@ -56,6 +56,7 @@ export default function IntegrationsTab({
   const [pmsApiKey, setPmsApiKey] = useState(pearDental?.api_key || '');
   const [pmsPracticeCode, setPmsPracticeCode] = useState(pearDental?.practice_code || '');
   const [isMetaConnecting, setIsMetaConnecting] = useState(false);
+  const [isInstagramConnecting, setIsInstagramConnecting] = useState(false);
 
   // Email verification state
   const [emailAddress, setEmailAddress] = useState(practice?.email || '');
@@ -133,8 +134,9 @@ export default function IntegrationsTab({
     } catch (err) { console.error(err); toast.error('Failed to disconnect Stripe'); }
   }
 
-  // Meta App ID — used for OAuth redirect URL
+  // Meta App IDs — used for OAuth redirect URLs
   const META_APP_ID = import.meta.env.VITE_META_APP_ID || '';
+  const META_IG_APP_ID = import.meta.env.VITE_META_IG_APP_ID || '';
 
   // Meta OAuth: single button connects both Facebook + Instagram
   function handleMetaLogin() {
@@ -199,14 +201,92 @@ export default function IntegrationsTab({
     }
   }
 
-  // Check for Meta OAuth callback on mount
+  // Instagram-only OAuth (for clinics that aren't using a Facebook Page).
+  // Uses the dedicated Pathir-IG app and the new Instagram Login API rather
+  // than Facebook-Login-with-Instagram. Tokens are IGAA prefixed and live
+  // 60 days; backend refreshes are handled in instagram-connect.
+  function handleInstagramLogin() {
+    if (!META_IG_APP_ID) {
+      toast.error('Instagram App not configured — contact support');
+      return;
+    }
+    sessionStorage.setItem('ig_connect_practice_id', practice?.id || '');
+
+    const redirectUri = `${window.location.origin}/`;
+    const scope = 'instagram_business_basic,instagram_business_manage_messages,instagram_business_manage_comments';
+    const authUrl = `https://www.instagram.com/oauth/authorize?force_reauth=true&client_id=${META_IG_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&response_type=code&scope=${encodeURIComponent(scope)}&state=ig_connect`;
+
+    window.location.href = authUrl;
+  }
+
+  async function handleInstagramCallback(code) {
+    setIsInstagramConnecting(true);
+    try {
+      const redirectUri = `${window.location.origin}/`;
+      const { data, error } = await supabase.functions.invoke('instagram-connect', {
+        body: {
+          practiceId: practice?.id,
+          code,
+          redirectUri,
+        },
+      });
+      if (error) throw error;
+      if (data?.error) throw new Error(data.error);
+
+      const { data: refreshed } = await supabase
+        .from('practices')
+        .select('integrations')
+        .eq('id', practice?.id)
+        .single();
+      if (refreshed) setIntegrations(refreshed.integrations || {});
+
+      const username = data?.instagram?.username;
+      toast.success(username ? `Instagram connected: @${username}` : 'Instagram connected');
+      setExpanded(null);
+
+      const url = new URL(window.location.href);
+      url.searchParams.delete('code');
+      url.searchParams.delete('state');
+      window.history.replaceState({}, '', url.pathname + url.search);
+    } catch (err) {
+      toast.error(err.message || 'Failed to connect Instagram');
+      console.error('[Instagram OAuth]', err);
+    } finally {
+      setIsInstagramConnecting(false);
+      sessionStorage.removeItem('ig_connect_practice_id');
+    }
+  }
+
+  async function handleInstagramDisconnect() {
+    try {
+      const { error } = await supabase.functions.invoke('instagram-connect', {
+        body: { practiceId: practice?.id, disconnect: true },
+      });
+      if (error) throw error;
+
+      const { data: refreshed } = await supabase
+        .from('practices')
+        .select('integrations')
+        .eq('id', practice?.id)
+        .single();
+      if (refreshed) setIntegrations(refreshed.integrations || {});
+
+      toast.success('Instagram disconnected');
+      setExpanded(null);
+    } catch (err) {
+      toast.error('Failed to disconnect Instagram');
+      console.error(err);
+    }
+  }
+
+  // Check for either Meta or Instagram OAuth callback on mount.
   React.useEffect(() => {
     const url = new URL(window.location.href);
     const code = url.searchParams.get('code');
     const state = url.searchParams.get('state');
-    if (code && state === 'meta_connect' && practice?.id) {
-      handleMetaCallback(code);
-    }
+    if (!code || !practice?.id) return;
+    if (state === 'meta_connect') handleMetaCallback(code);
+    else if (state === 'ig_connect') handleInstagramCallback(code);
   }, [practice?.id]); // eslint-disable-line react-hooks/exhaustive-deps
 
   async function handleMetaDisconnect() {
@@ -587,29 +667,47 @@ export default function IntegrationsTab({
                     )}
                     <p className="text-xs text-slate-500">AI will automatically respond to Instagram DMs on behalf of your practice.</p>
                     <div className="flex items-center gap-2 pt-1">
-                      <Button variant="ghost" size="sm" className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50" onClick={handleMetaDisconnect}>
+                      <Button
+                        variant="ghost"
+                        size="sm"
+                        className="h-7 text-xs text-red-500 hover:text-red-600 hover:bg-red-50"
+                        onClick={integrations.instagram_connected_via === 'instagram_oauth' ? handleInstagramDisconnect : handleMetaDisconnect}
+                      >
                         Disconnect
                       </Button>
                     </div>
                   </>
-                ) : isConnected.facebook_enabled ? (
-                  <>
-                    <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 text-xs text-amber-700">
-                      <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
-                      <span>Facebook is connected but no Instagram Business account was found linked to your Page. Make sure your Instagram is a Business or Creator account and is linked to your Facebook Page in Meta Business Suite.</span>
-                    </div>
-                    <Button size="sm" className="h-8 text-xs bg-[#1877F2] hover:bg-[#166ad8] text-white gap-2" onClick={handleMetaLogin}>
-                      <Facebook className="w-3.5 h-3.5" />
-                      Reconnect to retry
-                    </Button>
-                  </>
                 ) : (
                   <>
-                    <p className="text-xs text-slate-500">Instagram connects automatically when you connect your Facebook Page. Your Instagram must be a Business or Creator account linked to your Facebook Page.</p>
-                    <Button size="sm" className="h-8 text-xs bg-[#1877F2] hover:bg-[#166ad8] text-white gap-2" disabled={isMetaConnecting} onClick={handleMetaLogin}>
-                      <Facebook className="w-3.5 h-3.5" />
-                      Connect with Facebook
-                    </Button>
+                    <p className="text-xs text-slate-500">
+                      Two ways to connect Instagram: via your Facebook Page (recommended if you have one — connects Messenger and Instagram in one step), or directly via Instagram (use this if you don't have a Facebook Page or your Instagram isn't linked to one).
+                    </p>
+                    {isConnected.facebook_enabled && (
+                      <div className="flex items-start gap-2 p-2.5 rounded-lg bg-amber-50 text-xs text-amber-700">
+                        <AlertCircle className="w-3.5 h-3.5 shrink-0 mt-0.5" />
+                        <span>Facebook is connected but no Instagram Business account was detected on your Page. Try reconnecting Facebook, or connect Instagram directly using the button below.</span>
+                      </div>
+                    )}
+                    <div className="flex flex-col sm:flex-row gap-2 pt-1">
+                      <Button
+                        size="sm"
+                        className="h-8 text-xs bg-[#1877F2] hover:bg-[#166ad8] text-white gap-2"
+                        disabled={isMetaConnecting || isInstagramConnecting}
+                        onClick={handleMetaLogin}
+                      >
+                        <Facebook className="w-3.5 h-3.5" />
+                        {isConnected.facebook_enabled ? 'Reconnect Facebook' : 'Connect via Facebook'}
+                      </Button>
+                      <Button
+                        size="sm"
+                        className="h-8 text-xs bg-gradient-to-tr from-[#fdc468] via-[#df4996] to-[#7c3aed] hover:opacity-90 text-white gap-2"
+                        disabled={isInstagramConnecting || isMetaConnecting}
+                        onClick={handleInstagramLogin}
+                      >
+                        <Instagram className="w-3.5 h-3.5" />
+                        {isInstagramConnecting ? 'Connecting…' : 'Connect with Instagram'}
+                      </Button>
+                    </div>
                   </>
                 )}
               </div>

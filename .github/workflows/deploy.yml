@@ -37,6 +37,7 @@ jobs:
           VITE_SUPABASE_URL: https://amxcposgqlmgapzoopze.supabase.co
           VITE_SUPABASE_ANON_KEY: eyJhbGciOiJIUzI1NiIsInR5cCI6IkpXVCJ9.eyJpc3MiOiJzdXBhYmFzZSIsInJlZiI6ImFteGNwb3NncWxtZ2Fwem9vcHplIiwicm9sZSI6ImFub24iLCJpYXQiOjE3NzMwMDU3MTksImV4cCI6MjA4ODU4MTcxOX0.neGu5-OeiQVoNDV-ABZJ09fuR_BJwHvXavfyrHZorOk
           VITE_META_APP_ID: ${{ secrets.META_APP_ID }}
+          VITE_META_IG_APP_ID: ${{ secrets.META_IG_APP_ID }}
       - run: cp dist/index.html dist/404.html
       - run: echo "app.pathir.com" > dist/CNAME
 
@@ -76,6 +77,7 @@ jobs:
           SUPABASE_ACCESS_TOKEN: ${{ secrets.SUPABASE_ACCESS_TOKEN }}
           TEXTMAGIC_USERNAME: ${{ secrets.TEXTMAGIC_USERNAME }}
           TEXTMAGIC_API_KEY: ${{ secrets.TEXTMAGIC_API_KEY }}
+          META_IG_APP_ID: ${{ secrets.META_IG_APP_ID }}
         run: |
           PROJECT_REF="amxcposgqlmgapzoopze"
           PAIRS=()
@@ -84,6 +86,9 @@ jobs:
           fi
           if [ -n "$TEXTMAGIC_API_KEY" ]; then
             PAIRS+=("TEXTMAGIC_API_KEY=$TEXTMAGIC_API_KEY")
+          fi
+          if [ -n "$META_IG_APP_ID" ]; then
+            PAIRS+=("META_IG_APP_ID=$META_IG_APP_ID")
           fi
           if [ ${#PAIRS[@]} -gt 0 ]; then
             supabase secrets set "${PAIRS[@]}" --project-ref "$PROJECT_REF"
@@ -137,7 +142,7 @@ jobs:
             if echo "$CHANGED" | grep -qE "^supabase/functions/($fn_name|_shared)/"; then
               echo "Deploying $fn_name..."
               # External webhooks (ElevenLabs, Chatbase, Meta, Twilio) call without JWT
-              NO_JWT_FUNCTIONS="elevenlabs-tool elevenlabs-conversation elevenlabs-webhook chatbase-action chatbase-webhook chatbase-save meta-webhook meta-connect twilio-sms-webhook twilio-disconnected-voice textmagic-webhook textmagic-status send-reminders chat-token"
+              NO_JWT_FUNCTIONS="elevenlabs-tool elevenlabs-conversation elevenlabs-webhook chatbase-action chatbase-webhook chatbase-save meta-webhook meta-connect instagram-connect twilio-sms-webhook twilio-disconnected-voice textmagic-webhook textmagic-status send-reminders chat-token"
               if echo "$NO_JWT_FUNCTIONS" | grep -qw "$fn_name"; then
                 supabase functions deploy "$fn_name" --no-verify-jwt --project-ref "$PROJECT_REF"
               else
