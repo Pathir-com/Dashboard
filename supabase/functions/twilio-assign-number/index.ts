@@ -45,7 +45,14 @@ async function twilioGet(path: string) {
   const res = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${TWILIO_SID}${path}`, {
     headers: { Authorization: `Basic ${twilioAuth}` },
   });
-  return res.json();
+  const json = await res.json();
+  if (!res.ok) {
+    // Twilio surfaces auth/quota/region failures via 4xx with {code,message}.
+    // Tag them so the caller can tell apart "creds bad" from "no numbers".
+    (json as any).__http_status = res.status;
+    console.error(`[TWILIO GET ${path}] ${res.status}`, json);
+  }
+  return json;
 }
 
 async function twilioPost(path: string, body: Record<string, string>) {
@@ -80,6 +87,10 @@ function toAlphaSender(name: string): string {
 
 async function findPooledNumber(areaCode: string | null, assignedNumbers: Set<string>) {
   const data = await twilioGet("/IncomingPhoneNumbers.json?PageSize=100");
+  if ((data as any).__http_status) {
+    // Re-raise so the handler can return a useful error to the caller.
+    throw new Error(`Twilio auth/list failed: ${data.code} ${data.message}`);
+  }
   const allNumbers = data.incoming_phone_numbers || [];
 
   if (areaCode) {
@@ -202,7 +213,10 @@ Deno.serve(async (req) => {
 
       if (available.length === 0) {
         return new Response(
-          JSON.stringify({ message: "No UK numbers available on Twilio" }),
+          JSON.stringify({
+            message: "No UK numbers available on Twilio",
+            hint: "Pool exhausted and Twilio AvailablePhoneNumbers/GB/Local returned empty. Buy numbers manually in Twilio Console or check sub-account regulatory bundle.",
+          }),
           { status: 503, headers: { ...corsHeaders, "Content-Type": "application/json" } }
         );
       }
