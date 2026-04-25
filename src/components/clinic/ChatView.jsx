@@ -17,11 +17,12 @@
  *   2026-03-16: Initial creation — read-only web chat conversation viewer.
  */
 
-import React, { useState, useMemo } from 'react';
+import React, { useState, useMemo, useEffect } from 'react';
 import { useQuery } from '@tanstack/react-query';
 import { MessageCircle, Clock, User } from 'lucide-react';
 import { format, formatDistanceToNow } from 'date-fns';
 import { listWebChatConversations } from '@/lib/supabaseData';
+import { supabase } from '@/lib/supabase';
 
 /* ------------------------------------------------------------------ */
 /*  Status badge configuration                                        */
@@ -221,6 +222,23 @@ export default function ChatView({ practice }) {
   const [selectedId, setSelectedId] = useState(null);
   const practiceId = practice?.id;
 
+  // Persona name (e.g. "Poppy" for dental, "Hannah" for hair_transplant)
+  // is loaded from industry_templates so the UI never hardcodes a vertical.
+  const [personaName, setPersonaName] = useState('the AI');
+  useEffect(() => {
+    let cancelled = false;
+    if (!practice?.industry) return;
+    supabase
+      .from('industry_templates')
+      .select('agent_persona_name')
+      .eq('id', practice.industry)
+      .single()
+      .then(({ data }) => {
+        if (!cancelled && data?.agent_persona_name) setPersonaName(data.agent_persona_name);
+      });
+    return () => { cancelled = true; };
+  }, [practice?.industry]);
+
   // ---- Data fetching ----
   const {
     data: conversations = [],
@@ -261,7 +279,7 @@ export default function ChatView({ practice }) {
             <MessageCircle className="w-5 h-5 text-slate-700" />
             <h1 className="text-base font-semibold text-slate-900">Web Chat</h1>
           </div>
-          <p className="text-xs text-slate-400">Conversations handled by Poppy</p>
+          <p className="text-xs text-slate-400">Conversations handled by {personaName}</p>
         </div>
 
         {/* List */}
@@ -327,7 +345,7 @@ export default function ChatView({ practice }) {
               <div className="flex items-center gap-1.5 mb-3">
                 <div className="w-1.5 h-1.5 rounded-full bg-emerald-400" />
                 <p className="text-[10px] font-medium text-slate-400 uppercase tracking-wider">
-                  Responses handled by Poppy
+                  Responses handled by {personaName}
                 </p>
               </div>
 

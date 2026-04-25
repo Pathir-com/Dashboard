@@ -44,6 +44,25 @@ export default function IntegrationsTab({
   const twilioNumber = practice?.twilio_phone_number;
   const hasNumber = !!twilioNumber;
 
+  // Persona name comes from the industry template — never hardcode here.
+  // Falls back to "your assistant" before the lookup lands so the snippet
+  // never reads as if it belonged to another vertical.
+  const [personaName, setPersonaName] = useState('your assistant');
+  React.useEffect(() => {
+    let cancelled = false;
+    const industry = practice?.industry;
+    if (!industry) return;
+    supabase
+      .from('industry_templates')
+      .select('agent_persona_name')
+      .eq('id', industry)
+      .single()
+      .then(({ data }) => {
+        if (!cancelled && data?.agent_persona_name) setPersonaName(data.agent_persona_name);
+      });
+    return () => { cancelled = true; };
+  }, [practice?.industry]);
+
   const [expanded, setExpanded] = useState(null);
   const [isVerifying, setIsVerifying] = useState(false);
   const [embedCopied, setEmbedCopied] = useState(false);
@@ -519,7 +538,7 @@ export default function IntegrationsTab({
 
             {/* ── Web Chat embed ── */}
             {expanded === 'web_chat_enabled' && practice?.elevenlabs_agent_id && (() => {
-              const snippet = `<script\n  src="https://amxcposgqlmgapzoopze.supabase.co/storage/v1/object/public/widget/pathir-chat.js"\n  data-agent-id="${practice.elevenlabs_agent_id}"\n  data-token-url="https://amxcposgqlmgapzoopze.supabase.co/functions/v1/chat-token"\n  data-title="${practice.name || 'Chat with us'}"\n  data-subtitle="Ask Poppy anything"\n  data-accent="#3072ff"\n></script>`;
+              const snippet = `<script\n  src="https://amxcposgqlmgapzoopze.supabase.co/storage/v1/object/public/widget/pathir-chat.js"\n  data-agent-id="${practice.elevenlabs_agent_id}"\n  data-token-url="https://amxcposgqlmgapzoopze.supabase.co/functions/v1/chat-token"\n  data-title="${practice.name || 'Chat with us'}"\n  data-subtitle="Ask ${personaName} anything"\n  data-accent="#3072ff"\n></script>`;
               return (
                 <div className="space-y-3 max-w-md">
                   <p className="text-sm font-semibold text-slate-900 mb-2">Web Chat — Embed Code</p>
