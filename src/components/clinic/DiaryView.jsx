@@ -36,10 +36,60 @@ import {
   listAppointmentsForDay,
 } from '@/lib/supabaseData';
 
-// Hours to display in the day grid (8am–6pm)
-const HOURS = Array.from({ length: 11 }, (_, i) => i + 8);
+// Default hour window when nothing else tells us better.
+const DEFAULT_FIRST_HOUR = 8;
+const DEFAULT_LAST_HOUR = 18; // exclusive — last gridline is one hour before
 const HOUR_HEIGHT = 80; // px per hour row
-const GRID_START_HOUR = 8;
+
+/**
+ * Compute the diary's visible hour window from the practice's opening hours,
+ * the practitioners' working hours, and any appointment that day. We never
+ * cut off a real booking — if a clinic runs late or someone booked at 8:30 pm,
+ * the grid extends to fit. Returns { firstHour, lastHour, hours[] }.
+ *
+ * Data-driven, no hardcoded clinic schedule. Default 8 am – 6 pm only kicks in
+ * when no source supplies anything tighter.
+ */
+function computeHourWindow({ practice, practitioners, dayBlocks, selectedDay }) {
+  const dayName = ['Sunday','Monday','Tuesday','Wednesday','Thursday','Friday','Saturday'][selectedDay.getDay()];
+
+  let firstMin = DEFAULT_FIRST_HOUR * 60;
+  let lastMin  = DEFAULT_LAST_HOUR  * 60;
+
+  // 1. Practice opening hours for this day of week
+  const openingHours = Array.isArray(practice?.opening_hours) ? practice.opening_hours : [];
+  const todayHours = openingHours.find(h => h?.day === dayName);
+  if (todayHours?.is_open) {
+    const oMins = toMinutes(todayHours.open_time);
+    const cMins = toMinutes(todayHours.close_time);
+    if (oMins) firstMin = Math.min(firstMin, oMins);
+    if (cMins) lastMin  = Math.max(lastMin,  cMins);
+  }
+
+  // 2. Practitioner working hours for this day — they may run later than the
+  //    overall clinic window for individual surgeons.
+  const dayKey = String(dayName).toLowerCase();
+  for (const p of (practitioners || [])) {
+    const wh = p.workingHours?.[dayKey];
+    if (!wh) continue;
+    if (wh.start) firstMin = Math.min(firstMin, toMinutes(wh.start));
+    if (wh.end)   lastMin  = Math.max(lastMin,  toMinutes(wh.end));
+  }
+
+  // 3. Any actual appointment bleed past the previous bound. We never cut a
+  //    real booking off the grid — if it exists, it must render.
+  for (const b of (dayBlocks || [])) {
+    if (typeof b.startMin === 'number') firstMin = Math.min(firstMin, b.startMin);
+    if (typeof b.endMin   === 'number') lastMin  = Math.max(lastMin,  b.endMin);
+  }
+
+  // Round to whole hours: floor first, ceil last.
+  const firstHour = Math.max(0,  Math.floor(firstMin / 60));
+  const lastHour  = Math.min(24, Math.ceil(lastMin / 60));
+  const hours = [];
+  for (let h = firstHour; h < lastHour; h++) hours.push(h);
+  return { firstHour, lastHour, hours };
+}
 
 // Deterministic colour palette per practitioner column
 const COLOURS = [
@@ -227,6 +277,18 @@ export default function DiaryView({ enquiries, practice }) {
 
     return blocks.sort((a, b) => a.startMin - b.startMin);
   }, [dbAppointments, enquiries, dateStr, selectedDay, practitioners, emailStatusByContact]);
+
+  // Visible hour window — derived from the practice's opening hours, the
+  // practitioners' working hours, and any actual booking that day. Falls
+  // back to 8 am – 6 pm when none of those tell us better. This means a
+  // hair-transplant clinic with Thursday hours 09:00–20:00 will render
+  // a 7:30 pm consultation in the right slot instead of off-grid.
+  const { firstHour, lastHour, hours: HOURS } = useMemo(
+    () => computeHourWindow({ practice, practitioners, dayBlocks, selectedDay }),
+    [practice, practitioners, dayBlocks, selectedDay],
+  );
+  const GRID_START_HOUR = firstHour;
+  void lastHour; // referenced via HOURS.length below
 
   // ---- Mini calendar: which days have appointments ----
   // Use a simple check — dots for days with blocks
