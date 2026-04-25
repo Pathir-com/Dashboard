@@ -146,7 +146,7 @@ export default function IntegrationsTab({
     sessionStorage.setItem('meta_connect_practice_id', practice?.id || '');
 
     const redirectUri = `${window.location.origin}/`;
-    const scope = 'pages_messaging,pages_manage_metadata,instagram_manage_messages,pages_show_list';
+    const scope = 'pages_messaging,pages_manage_metadata,instagram_business_manage_messages,pages_show_list';
     const authUrl = `https://www.facebook.com/v19.0/dialog/oauth?client_id=${META_APP_ID}&redirect_uri=${encodeURIComponent(redirectUri)}&scope=${scope}&response_type=code&state=meta_connect`;
 
     window.location.href = authUrl;
