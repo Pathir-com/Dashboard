@@ -28,6 +28,11 @@ const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID") || "";
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN") || "";
 const TEXTMAGIC_USERNAME = Deno.env.get("TEXTMAGIC_USERNAME") || "";
 const TEXTMAGIC_API_KEY = Deno.env.get("TEXTMAGIC_API_KEY") || "";
+const SIGNALWIRE_PROJECT_ID = Deno.env.get("SIGNALWIRE_PROJECT_ID") || "";
+const SIGNALWIRE_API_TOKEN = Deno.env.get("SIGNALWIRE_API_TOKEN") || "";
+const SIGNALWIRE_SPACE_URL = Deno.env.get("SIGNALWIRE_SPACE_URL") || "";
+
+export type SmsProvider = "twilio" | "textmagic" | "signalwire";
 
 export interface SmsPractice {
   id: string;
@@ -40,7 +45,7 @@ export interface SmsPractice {
 }
 
 export interface SmsResult {
-  provider: "twilio" | "textmagic";
+  provider: SmsProvider;
   messageId: string;
   status: string;
   from: string;
@@ -50,7 +55,7 @@ export interface SmsResult {
 export class SmsError extends Error {
   constructor(
     message: string,
-    public readonly provider: "twilio" | "textmagic" | "none",
+    public readonly provider: SmsProvider | "none",
     public readonly statusCode: number = 400,
     public readonly providerCode?: string | number,
   ) {
@@ -60,11 +65,15 @@ export class SmsError extends Error {
 }
 
 /** Which provider should this practice send SMS through? */
-export function resolveProvider(practice: SmsPractice): "twilio" | "textmagic" {
+export function resolveProvider(practice: SmsPractice): SmsProvider {
   const configured = practice.integrations?.sms_provider;
+  if (configured === "signalwire") return "signalwire";
   if (configured === "textmagic") return "textmagic";
   if (configured === "twilio") return "twilio";
-  // No explicit choice → infer: TextMagic if it's configured+enabled, else Twilio.
+  // No explicit choice → infer in priority order: SignalWire if configured,
+  // then TextMagic, then Twilio as legacy default.
+  const sw = practice.integrations?.signalwire;
+  if (sw?.enabled && sw?.phone_number) return "signalwire";
   const tm = practice.integrations?.textmagic;
   if (tm?.enabled && tm?.phone_number) return "textmagic";
   return "twilio";
@@ -77,9 +86,8 @@ export async function sendSms(
   body: string,
 ): Promise<SmsResult> {
   const provider = resolveProvider(practice);
-  if (provider === "textmagic") {
-    return sendViaTextMagic(practice, to, body);
-  }
+  if (provider === "signalwire") return sendViaSignalWire(practice, to, body);
+  if (provider === "textmagic")  return sendViaTextMagic(practice, to, body);
   return sendViaTwilio(practice, to, body);
 }
 
@@ -210,5 +218,65 @@ async function sendViaTextMagic(
     status: String(result.status ?? "queued"),
     from,
     to,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// SignalWire — Twilio-API-compatible REST. Same Messages.json shape, just
+// against the Space URL with a Project ID + API Token Basic-auth pair.
+// Docs: https://docs.signalwire.com/reference/compatibility-api/v1/messages
+// ---------------------------------------------------------------------------
+
+async function sendViaSignalWire(
+  practice: SmsPractice,
+  to: string,
+  body: string,
+): Promise<SmsResult> {
+  if (!SIGNALWIRE_PROJECT_ID || !SIGNALWIRE_API_TOKEN || !SIGNALWIRE_SPACE_URL) {
+    throw new SmsError("SignalWire credentials not configured", "signalwire", 500);
+  }
+
+  const sw = practice.integrations?.signalwire;
+  if (!sw?.phone_number) {
+    throw new SmsError(
+      "SignalWire not configured for this practice (missing phone_number).",
+      "signalwire",
+      400,
+    );
+  }
+
+  const params: Record<string, string> = {
+    To: to,
+    From: sw.phone_number,
+    Body: body,
+  };
+
+  const auth = btoa(`${SIGNALWIRE_PROJECT_ID}:${SIGNALWIRE_API_TOKEN}`);
+  const res = await fetch(
+    `https://${SIGNALWIRE_SPACE_URL}/api/laml/2010-04-01/Accounts/${SIGNALWIRE_PROJECT_ID}/Messages.json`,
+    {
+      method: "POST",
+      headers: {
+        Authorization: `Basic ${auth}`,
+        "Content-Type": "application/x-www-form-urlencoded",
+      },
+      body: new URLSearchParams(params).toString(),
+    },
+  );
+  const result = await res.json();
+  if (!res.ok) {
+    throw new SmsError(
+      result.message || result.detail || "SignalWire send failed",
+      "signalwire",
+      res.status,
+      result.code,
+    );
+  }
+  return {
+    provider: "signalwire",
+    messageId: result.sid,
+    status: result.status,
+    from: result.from || sw.phone_number,
+    to: result.to,
   };
 }

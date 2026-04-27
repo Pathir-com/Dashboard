@@ -29,6 +29,7 @@ export async function loadPractice(
     practiceId?: string;
     twilioNumber?: string;
     textmagicNumber?: string;
+    signalwireNumber?: string;
     agentId?: string;
     facebookPageId?: string;
     instagramBusinessId?: string;
@@ -61,6 +62,14 @@ export async function loadPractice(
       .from("practices")
       .select(PRACTICE_CONTEXT_COLS)
       .filter("integrations->textmagic->>phone_number", "eq", opts.textmagicNumber);
+    practice = practices?.[0] || null;
+  }
+
+  if (!practice && opts.signalwireNumber) {
+    const { data: practices } = await db
+      .from("practices")
+      .select(PRACTICE_CONTEXT_COLS)
+      .filter("integrations->signalwire->>phone_number", "eq", opts.signalwireNumber);
     practice = practices?.[0] || null;
   }
 
