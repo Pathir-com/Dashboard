@@ -30,6 +30,7 @@ export async function loadPractice(
     twilioNumber?: string;
     textmagicNumber?: string;
     signalwireNumber?: string;
+    vonageNumber?: string;
     agentId?: string;
     facebookPageId?: string;
     instagramBusinessId?: string;
@@ -70,6 +71,14 @@ export async function loadPractice(
       .from("practices")
       .select(PRACTICE_CONTEXT_COLS)
       .filter("integrations->signalwire->>phone_number", "eq", opts.signalwireNumber);
+    practice = practices?.[0] || null;
+  }
+
+  if (!practice && opts.vonageNumber) {
+    const { data: practices } = await db
+      .from("practices")
+      .select(PRACTICE_CONTEXT_COLS)
+      .filter("integrations->vonage->>phone_number", "eq", opts.vonageNumber);
     practice = practices?.[0] || null;
   }
 

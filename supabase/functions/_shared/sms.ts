@@ -31,8 +31,10 @@ const TEXTMAGIC_API_KEY = Deno.env.get("TEXTMAGIC_API_KEY") || "";
 const SIGNALWIRE_PROJECT_ID = Deno.env.get("SIGNALWIRE_PROJECT_ID") || "";
 const SIGNALWIRE_API_TOKEN = Deno.env.get("SIGNALWIRE_API_TOKEN") || "";
 const SIGNALWIRE_SPACE_URL = Deno.env.get("SIGNALWIRE_SPACE_URL") || "";
+const VONAGE_API_KEY = Deno.env.get("VONAGE_API_KEY") || "";
+const VONAGE_API_SECRET = Deno.env.get("VONAGE_API_SECRET") || "";
 
-export type SmsProvider = "twilio" | "textmagic" | "signalwire";
+export type SmsProvider = "twilio" | "textmagic" | "signalwire" | "vonage";
 
 export interface SmsPractice {
   id: string;
@@ -67,11 +69,14 @@ export class SmsError extends Error {
 /** Which provider should this practice send SMS through? */
 export function resolveProvider(practice: SmsPractice): SmsProvider {
   const configured = practice.integrations?.sms_provider;
+  if (configured === "vonage") return "vonage";
   if (configured === "signalwire") return "signalwire";
   if (configured === "textmagic") return "textmagic";
   if (configured === "twilio") return "twilio";
-  // No explicit choice → infer in priority order: SignalWire if configured,
-  // then TextMagic, then Twilio as legacy default.
+  // No explicit choice → infer in priority order: Vonage > SignalWire >
+  // TextMagic > Twilio (legacy default).
+  const vg = practice.integrations?.vonage;
+  if (vg?.enabled && vg?.phone_number) return "vonage";
   const sw = practice.integrations?.signalwire;
   if (sw?.enabled && sw?.phone_number) return "signalwire";
   const tm = practice.integrations?.textmagic;
@@ -86,6 +91,7 @@ export async function sendSms(
   body: string,
 ): Promise<SmsResult> {
   const provider = resolveProvider(practice);
+  if (provider === "vonage")     return sendViaVonage(practice, to, body);
   if (provider === "signalwire") return sendViaSignalWire(practice, to, body);
   if (provider === "textmagic")  return sendViaTextMagic(practice, to, body);
   return sendViaTwilio(practice, to, body);
@@ -278,5 +284,75 @@ async function sendViaSignalWire(
     status: result.status,
     from: result.from || sw.phone_number,
     to: result.to,
+  };
+}
+
+// ---------------------------------------------------------------------------
+// Vonage (formerly Nexmo) — SMS API legacy endpoint.
+//   Auth: api_key + api_secret in body
+//   Send: POST https://rest.nexmo.com/sms/json
+//   Phone format: E.164 without leading + (e.g. 447441473505)
+// Docs: https://developer.vonage.com/en/api/sms
+// ---------------------------------------------------------------------------
+
+async function sendViaVonage(
+  practice: SmsPractice,
+  to: string,
+  body: string,
+): Promise<SmsResult> {
+  if (!VONAGE_API_KEY || !VONAGE_API_SECRET) {
+    throw new SmsError("Vonage credentials not configured", "vonage", 500);
+  }
+
+  const vg = practice.integrations?.vonage;
+  if (!vg?.phone_number) {
+    throw new SmsError(
+      "Vonage not configured for this practice (missing phone_number).",
+      "vonage",
+      400,
+    );
+  }
+
+  // Vonage rejects the leading '+' on legacy SMS API params.
+  const fromNum = String(vg.phone_number).replace(/^\+/, "");
+  const toNum   = String(to).replace(/^\+/, "");
+
+  const params = new URLSearchParams({
+    api_key:    VONAGE_API_KEY,
+    api_secret: VONAGE_API_SECRET,
+    from:       fromNum,
+    to:         toNum,
+    text:       body,
+    type:       "unicode",
+  });
+
+  const res = await fetch("https://rest.nexmo.com/sms/json", {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: params.toString(),
+  });
+
+  const result = await res.json();
+  // Vonage's legacy API always returns 200 with messages[].status (a numeric
+  // code; "0" = success). Errors live INSIDE the success-shaped envelope.
+  const messages = (result?.messages as Array<Record<string, unknown>>) || [];
+  const m = messages[0] || {};
+  const statusCode = String(m.status ?? "");
+
+  if (statusCode !== "0") {
+    throw new SmsError(
+      String(m["error-text"] || "Vonage send failed"),
+      "vonage",
+      400,
+      statusCode,
+    );
+  }
+
+  return {
+    provider: "vonage",
+    messageId: String(m["message-id"] || ""),
+    status:    "sent",
+    from:      fromNum,
+    to:        String(m.to || toNum),
   };
 }
