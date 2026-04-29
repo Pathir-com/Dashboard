@@ -176,6 +176,8 @@ Deno.serve(async (req) => {
         conversationHistory: history,
         contactName: contact.name || "Unknown",
         channel: "sms",
+        db,
+        practiceId: practice.id,
       });
 
       try {

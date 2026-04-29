@@ -1,22 +1,44 @@
 /**
- * Shared AI reply helper. Uses ElevenLabs Conversational AI over WebSocket
- * to fetch a one-shot reply from the practice's agent — same brain as
- * phone calls. Provides a fallback reply when the WS call fails or times
- * out so webhooks stay responsive.
+ * Shared AI reply helper. On every inbound text-channel message (SMS,
+ * Facebook, Instagram, web chat, email) it builds a *fresh* system prompt
+ * from the database — current industry template + current practitioners +
+ * current services + current opening hours + current locations + the
+ * patient's name + the recent conversation history — and sends it as a
+ * conversation-time override to the practice's ElevenLabs ConvAI agent.
  *
- * Why WebSocket: ElevenLabs ConvAI has no REST one-shot text endpoint —
- * every candidate path under /v1/convai returns 404. WebSocket is the
- * documented integration path for both text and voice.
+ * Why this shape:
+ *   The practice row is the source of truth. If the clinic adds a new
+ *   service in Settings → Pricing or hires a new practitioner, the next
+ *   inbound reply MUST reflect it. Baking the prompt at agent-creation
+ *   time and never refreshing it (the previous behaviour) means the
+ *   agent runs on stale data the moment the user touches Settings.
  *
- * Used by:
- *   - supabase/functions/meta-webhook/index.ts
- *   - supabase/functions/textmagic-webhook/index.ts
+ *   This module re-builds the prompt per inbound, so RAG IS the
+ *   database, no re-provisioning required, no per-vertical hardcoding.
  *
- * Changes:
- *   2026-04-24: Initial WebSocket implementation — previous REST version
- *               hit a non-existent endpoint and always fell through to
- *               the static fallback.
+ * Performance:
+ *   - Skips the agent's auto-greeting via `first_message: ""` override
+ *     (saves 1–3s on every reply).
+ *   - Sends `user_message` immediately after the override is acknowledged
+ *     so the agent generates the real reply on its first response, not
+ *     its second.
+ *   - 12s WS timeout with a static fallback so webhooks never hang.
+ *
+ * Channel-aware:
+ *   The fresh system prompt explicitly tells the agent to answer
+ *   directly from the catalog for text channels (SMS / chat / Meta /
+ *   email) and to keep replies short. Voice continues to use the
+ *   provisioned tool-driven prompt unchanged (this module is only
+ *   called for text).
  */
+
+import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
+import {
+  buildLocationsBlock,
+  buildPractitionersBlock,
+  buildServicesBlock,
+  loadTemplate,
+} from "./industry.ts";
 
 const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY") || "";
 
@@ -27,12 +49,12 @@ export type Channel =
   | "web_chat"
   | "email";
 
-const CHANNEL_LABEL: Record<Channel, string> = {
-  sms: "SMS text message",
-  facebook: "Facebook Messenger message",
-  instagram: "Instagram DM",
-  web_chat: "website chat message",
-  email: "email",
+const CHANNEL_INSTRUCTION: Record<Channel, string> = {
+  sms:        "This is an SMS conversation. Reply concisely (under 320 characters where possible). No markdown. No tool calls.",
+  facebook:   "This is a Facebook Messenger conversation. Reply concisely (under 500 characters). Friendly, casual tone.",
+  instagram:  "This is an Instagram DM. Reply concisely (under 500 characters). Friendly, casual tone.",
+  web_chat:   "This is a website chat conversation. Reply concisely (under 500 characters). The visitor is on the clinic's website and may be evaluating the clinic.",
+  email:      "This is an email conversation. Reply in a structured, professional tone. Use short paragraphs, no markdown headers.",
 };
 
 export interface AiReplyOptions {
@@ -43,13 +65,18 @@ export interface AiReplyOptions {
   conversationHistory: string | null;
   contactName: string;
   channel: Channel;
-  /** Total WebSocket timeout in ms. Default 12s. */
+  /** Total WebSocket timeout in ms. Default 15s. */
   timeoutMs?: number;
+  /** Supabase client used to load template + relational catalog. */
+  // deno-lint-ignore no-explicit-any
+  db?: SupabaseClient;
+  /** Practice id — required if `db` is provided so we can refresh from DB. */
+  practiceId?: string;
 }
 
 /**
- * Get an AI reply from ElevenLabs. Returns a string — either the agent's
- * response or a fallback. Never throws.
+ * Get an AI reply. Returns a string — either the agent's response or a
+ * channel-appropriate fallback. Never throws.
  */
 export async function getAiReply(opts: AiReplyOptions): Promise<string> {
   const { agentId, message, practiceContext, contactName } = opts;
@@ -58,11 +85,33 @@ export async function getAiReply(opts: AiReplyOptions): Promise<string> {
     return fallbackReply(contactName, practiceContext.practice_name);
   }
 
+  // Build a fresh, channel-aware system prompt from the database. If we
+  // can't refresh (no db or practiceId provided) we fall back to no
+  // override and let the agent use its provisioned prompt.
+  let promptOverride: string | null = null;
   try {
-    const reply = await fetchAgentReply(agentId, message, opts.timeoutMs ?? 12000);
-    if (reply && reply.trim().length > 0) {
-      return reply.trim();
+    if (opts.db && opts.practiceId) {
+      promptOverride = await buildFreshPrompt({
+        db: opts.db,
+        practiceId: opts.practiceId,
+        contactName,
+        channel: opts.channel,
+        conversationHistory: opts.conversationHistory,
+        practiceContext,
+      });
     }
+  } catch (e) {
+    console.warn("[AI REPLY] fresh-prompt build failed, falling back to provisioned prompt:", e);
+  }
+
+  try {
+    const reply = await fetchAgentReply(
+      agentId,
+      message,
+      promptOverride,
+      opts.timeoutMs ?? 15000,
+    );
+    if (reply && reply.trim().length > 0) return reply.trim();
   } catch (e) {
     console.warn("[AI REPLY] WS error:", e instanceof Error ? e.message : e);
   }
@@ -71,30 +120,124 @@ export async function getAiReply(opts: AiReplyOptions): Promise<string> {
 }
 
 // ---------------------------------------------------------------------------
-// ElevenLabs ConvAI WebSocket call
+// Fresh-from-DB system prompt builder. System-wide — works for any vertical
+// because everything reads from industry_templates + the practice row.
 // ---------------------------------------------------------------------------
 
-/**
- * Open a WebSocket to the ConvAI agent, send the user message, collect the
- * agent's text reply, close. Resolves to the reply text or null on timeout.
- *
- * Protocol notes (probed 2026-04-24):
- *   - Agent config blocks `prompt` and `first_message` overrides, so we
- *     send an empty client-init and rely on the agent's provisioned prompt.
- *     Per-practice context is baked in at agent-creation time by
- *     provision-practice.
- *   - The agent auto-emits its greeting as the FIRST agent_response even
- *     when we send a user_message immediately after the init metadata.
- *     We skip that first response and take the second one as the real
- *     reply to the patient. A quick `interruption` event between them is
- *     normal — the agent cuts its own greeting short to answer the user.
- */
+interface BuildPromptOptions {
+  // deno-lint-ignore no-explicit-any
+  db: SupabaseClient;
+  practiceId: string;
+  contactName: string;
+  channel: Channel;
+  conversationHistory: string | null;
+  // deno-lint-ignore no-explicit-any
+  practiceContext: Record<string, any>;
+}
+
+async function buildFreshPrompt(opts: BuildPromptOptions): Promise<string> {
+  const { db, practiceId, channel } = opts;
+
+  // Load practice + relational catalog in parallel.
+  const [{ data: practice }, { data: practitioners }, { data: services }] =
+    await Promise.all([
+      db.from("practices")
+        .select("id, name, industry, address, phone, email, website, opening_hours, locations, holiday_hours, usps, practice_plan, clinic_guidelines, agent_tone")
+        .eq("id", practiceId)
+        .single(),
+      db.from("practitioners")
+        .select("name, title, credentials, services, bio, working_hours")
+        .eq("practice_id", practiceId)
+        .order("sort_order", { ascending: true }),
+      db.from("services")
+        .select("name, category, price_pence, duration_minutes, description")
+        .eq("practice_id", practiceId)
+        .order("name", { ascending: true }),
+    ]);
+
+  if (!practice) throw new Error(`practice ${practiceId} not found`);
+
+  const template = await loadTemplate(db, practice.industry);
+
+  const persona = template.agent_persona_name;
+  const tone = practice.agent_tone || "warm, professional, efficient";
+  const usps = practice.usps || "";
+  const guidelines = practice.clinic_guidelines || "";
+  const planLine = practice.practice_plan?.offered
+    ? `Practice plan offered: ${practice.practice_plan.terms || "yes"}.`
+    : "";
+
+  const hoursBlock = formatHours(practice.opening_hours);
+  const practitionersBlock = buildPractitionersBlock(practitioners || []);
+  const servicesBlock = buildServicesBlock(services || []);
+  const locationsBlock = buildLocationsBlock(practice.locations || []);
+
+  const channelInstruction = CHANNEL_INSTRUCTION[channel] ||
+    "Reply concisely from the catalog below.";
+
+  const historyBlock = opts.conversationHistory
+    ? `\nRECENT CONVERSATION HISTORY (most recent first):\n${opts.conversationHistory}\n`
+    : "";
+
+  const patientLine = opts.contactName && opts.contactName !== "Unknown"
+    ? `Patient: ${opts.contactName}.`
+    : "Patient name unknown — ask politely if booking is needed.";
+
+  // The override prompt explicitly authorises direct catalog answering
+  // for text channels (the provisioned voice prompt instead routes
+  // every catalog question through tool calls — wrong shape for SMS).
+  return [
+    `You are ${persona}, the AI receptionist for ${practice.name}.`,
+    `Vertical: ${template.display_name} (${practice.industry}).`,
+    `Tone: ${tone}.`,
+    "",
+    `CHANNEL DIRECTIVES — ${channelInstruction}`,
+    "Use the live catalog below to answer questions DIRECTLY. Quote exact prices, durations, practitioner names, and locations from it. Never say 'let me check' or 'I'll look that up' — the data IS this prompt. Only ask for the patient's name + phone when actually booking an appointment.",
+    "Never invent prices, services, or practitioners that aren't listed below. If something isn't here, say so and offer to take their details for a callback.",
+    "",
+    `=== ${practice.name.toUpperCase()} — LIVE DATABASE SNAPSHOT ===`,
+    "",
+    "OPENING HOURS:",
+    hoursBlock,
+    "",
+    "LOCATIONS:",
+    locationsBlock,
+    "",
+    "PRACTITIONERS:",
+    practitionersBlock,
+    "",
+    "SERVICES & PRICES:",
+    servicesBlock,
+    "",
+    usps ? `WHAT MAKES US DIFFERENT:\n${usps}\n` : "",
+    planLine,
+    guidelines ? `CLINIC GUIDELINES (always follow):\n${guidelines}\n` : "",
+    "",
+    `PATIENT CONTEXT — ${patientLine}`,
+    historyBlock,
+    "",
+    "When the patient asks about a service or price, answer with the exact figure from SERVICES above. When they ask which practitioner does what, name the specific person from PRACTITIONERS above. When they ask about availability or location, reference the OPENING HOURS and LOCATIONS above. Be concrete.",
+  ].filter(Boolean).join("\n");
+}
+
+function formatHours(hours: unknown): string {
+  if (!Array.isArray(hours) || hours.length === 0) return "(not set)";
+  // deno-lint-ignore no-explicit-any
+  return (hours as any[]).map((h) =>
+    `- ${h.day}: ${h.is_open ? `${h.open_time}–${h.close_time}` : "Closed"}`
+  ).join("\n");
+}
+
+// ---------------------------------------------------------------------------
+// ElevenLabs ConvAI WebSocket call with prompt override + first_message skip
+// ---------------------------------------------------------------------------
+
 async function fetchAgentReply(
   agentId: string,
   userMessage: string,
+  promptOverride: string | null,
   timeoutMs: number,
 ): Promise<string | null> {
-  // Signed URL authorises the WS handshake without leaking the API key on wss.
   const urlRes = await fetch(
     `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
     { headers: { "xi-api-key": ELEVENLABS_API_KEY } },
@@ -120,9 +263,27 @@ async function fetchAgentReply(
     const timer = setTimeout(() => finish(replyText), timeoutMs);
     const ws = new WebSocket(signed_url);
 
+    // If we have a prompt override, the agent skips its auto-greeting
+    // (first_message="") so its FIRST agent_response is the real reply.
+    // If we don't, the agent emits its provisioned greeting first and
+    // we skip it (legacy behaviour).
+    const skipGreeting = !!promptOverride;
+
     ws.onopen = () => {
-      // Empty client-init: no overrides, use the agent's own configuration.
-      ws.send(JSON.stringify({ type: "conversation_initiation_client_data" }));
+      // deno-lint-ignore no-explicit-any
+      const init: Record<string, any> = {
+        type: "conversation_initiation_client_data",
+      };
+      if (promptOverride) {
+        init.conversation_config_override = {
+          agent: {
+            prompt: { prompt: promptOverride },
+            first_message: "",
+            language: "en",
+          },
+        };
+      }
+      ws.send(JSON.stringify(init));
     };
 
     ws.onmessage = (evt) => {
@@ -132,33 +293,31 @@ async function fetchAgentReply(
       const type = data.type as string;
 
       if (type === "conversation_initiation_metadata") {
-        // Post the patient's message immediately — the agent will still
-        // emit its greeting first, which we'll skip below.
         ws.send(JSON.stringify({ type: "user_message", text: userMessage }));
       } else if (type === "agent_response") {
         agentResponsesSeen++;
         // deno-lint-ignore no-explicit-any
         const text = (data.agent_response_event as any)?.agent_response;
 
-        if (agentResponsesSeen === 1) {
-          // This is the auto-greeting ("Hello... welcome to <practice>...").
-          // Ignore it; the next agent_response is the real reply.
-          return;
-        }
-        if (typeof text === "string") {
+        // Without override: response #1 is the auto-greeting, response #2 is the real reply
+        // With override (first_message=""): response #1 IS the real reply
+        const isRealReply = skipGreeting
+          ? agentResponsesSeen === 1
+          : agentResponsesSeen >= 2;
+
+        if (!isRealReply) return;
+
+        if (typeof text === "string" && text.trim().length > 0) {
           replyText = text;
           finish(replyText);
         }
       } else if (type === "ping") {
-        // Keepalive — echo back so the server doesn't close us mid-generation.
         // deno-lint-ignore no-explicit-any
         const eventId = (data.ping_event as any)?.event_id;
         if (eventId !== undefined) {
           ws.send(JSON.stringify({ type: "pong", event_id: eventId }));
         }
       }
-      // Ignore: audio chunks, user_transcript echoes, agent_response_correction,
-      // interruption events — none affect the text reply we're after.
     };
 
     ws.onerror = (err) => {

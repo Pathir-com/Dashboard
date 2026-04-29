@@ -173,6 +173,8 @@ Deno.serve(async (req) => {
             conversationHistory: history,
             contactName: contact.name || "Unknown",
             channel: "sms",
+            db,
+            practiceId: practice.id,
           });
           const sent = await sendSms(fullPractice, from, aiReply);
           console.log(

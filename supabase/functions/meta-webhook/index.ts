@@ -216,6 +216,8 @@ Deno.serve(async (req) => {
             conversationHistory: history,
             contactName: contact.name || "Unknown",
             channel,
+            db,
+            practiceId: practice.id,
           });
 
           // Send the AI response back via Meta
