@@ -277,7 +277,15 @@ async function fetchAgentReply(
       if (promptOverride) {
         init.conversation_config_override = {
           agent: {
-            prompt: { prompt: promptOverride },
+            prompt: {
+              prompt: promptOverride,
+              // Clear voice-only tools for text channels — the provisioned
+              // tools (lookup_caller_phone, search_availability, etc.) tell
+              // the LLM to deflect questions to a tool call, which is the
+              // wrong behaviour for SMS / chat / Meta. Empty tools list
+              // forces the model to answer from the prompt's catalog.
+              tools: [],
+            },
             first_message: "",
             language: "en",
           },

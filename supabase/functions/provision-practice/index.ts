@@ -135,12 +135,17 @@ Deno.serve(async (req) => {
       },
       // Allow conversation-time overrides so the per-inbound text-channel
       // path (_shared/ai-reply.ts) can refresh the prompt with live DB
-      // data (services, prices, practitioners). System-wide — every new
-      // clinic gets this automatically, regardless of vertical.
+      // data (services, prices, practitioners) AND clear voice-only tools
+      // for SMS/chat/Meta. System-wide — every new clinic gets this for
+      // free, regardless of vertical.
       platform_settings: {
         overrides: {
           conversation_config_override: {
-            agent: { prompt: { prompt: true }, first_message: true, language: true },
+            agent: {
+              prompt: { prompt: true, tool_ids: true, tools: true },
+              first_message: true,
+              language: true,
+            },
             tts: { voice_id: false },
           },
           custom_llm_extra_body: false,

@@ -51,7 +51,15 @@ Deno.serve(async (req) => {
       platform_settings: {
         overrides: {
           conversation_config_override: {
-            agent: { prompt: { prompt: true }, first_message: true, language: true },
+            // Allow prompt + tools override per conversation. Tools must
+            // be overridable so SMS/text channels can clear the tool list
+            // (the provisioned voice tools force deflection like
+            // "let me look that up" which is wrong for text).
+            agent: {
+              prompt: { prompt: true, tool_ids: true, tools: true },
+              first_message: true,
+              language: true,
+            },
             tts: { voice_id: false },
           },
           custom_llm_extra_body: false,
