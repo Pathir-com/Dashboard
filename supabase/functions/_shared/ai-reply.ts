@@ -291,7 +291,9 @@ async function fetchAgentReply(
           },
         };
       }
-      ws.send(JSON.stringify(init));
+      const payload = JSON.stringify(init);
+      console.log(`[AI REPLY DEBUG] init payload bytes=${payload.length} hasOverride=${!!promptOverride}`);
+      ws.send(payload);
     };
 
     ws.onmessage = (evt) => {
@@ -299,6 +301,7 @@ async function fetchAgentReply(
       try { data = JSON.parse(evt.data); } catch { return; }
 
       const type = data.type as string;
+      console.log(`[AI REPLY DEBUG] WS msg type=${type}`);
 
       if (type === "conversation_initiation_metadata") {
         ws.send(JSON.stringify({ type: "user_message", text: userMessage }));
