@@ -19,8 +19,24 @@ const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 
 Deno.serve(async (req) => {
+  // verify_jwt=true on this function means only valid Supabase JWTs reach
+  // here. Decode the JWT (no signature verify needed — gateway did it) and
+  // require role=service_role.
   const auth = req.headers.get("Authorization") || "";
-  if (auth !== `Bearer ${SERVICE_ROLE}`) return new Response("forbidden", { status: 403 });
+  const token = auth.replace(/^Bearer\s+/i, "").trim();
+  let role = "";
+  try {
+    const parts = token.split(".");
+    if (parts.length === 3) {
+      const payload = JSON.parse(
+        atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")),
+      );
+      role = String(payload.role || "");
+    }
+  } catch { /* not a JWT */ }
+  if (role !== "service_role" && token !== SERVICE_ROLE) {
+    return new Response("forbidden", { status: 403 });
+  }
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE);
   const { data: practices } = await db
