@@ -21,7 +21,14 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { findOrCreateContact } from "../_shared/match-contact.ts";
-import { appendToEnquiry } from "../_shared/conversation.ts";
+import { appendReplyToEnquiry, appendToEnquiry } from "../_shared/conversation.ts";
+import {
+  buildPracticeContext,
+  getConversationHistory,
+  loadPractice,
+} from "../_shared/practice-context.ts";
+import { getAiReply } from "../_shared/ai-reply.ts";
+import { sendSms } from "../_shared/sms.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -58,17 +65,48 @@ Deno.serve(async (req) => {
     const to = form.To || "";
     const body = form.Body || "";
     const messageSid = form.MessageSid || form.SmsMessageSid || null;
+    const messagingServiceSid =
+      form.MessagingServiceSid || form.MessagingServiceSID || null;
 
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    const { data: practice } = await db
-      .from("practices")
-      .select("id, name, integrations, twilio_phone_number")
-      .eq("twilio_phone_number", to)
-      .single();
+    // Resolve the practice in priority order:
+    //   1. by the receiving number against twilio_phone_number (legacy single-number setup)
+    //   2. by the receiving number against twilio_sms_number (separate SMS line)
+    //   3. by the MessagingServiceSid the inbound came in through (modern setup
+    //      where the SMS-capable Mobile number lives only inside a Messaging
+    //      Service, not on the practice row)
+    let practice: { id: string; name: string; integrations: unknown; twilio_phone_number: string | null } | null = null;
+
+    {
+      const { data } = await db
+        .from("practices")
+        .select("id, name, integrations, twilio_phone_number")
+        .eq("twilio_phone_number", to)
+        .maybeSingle();
+      practice = data ?? null;
+    }
+    if (!practice) {
+      const { data } = await db
+        .from("practices")
+        .select("id, name, integrations, twilio_phone_number")
+        .eq("twilio_sms_number", to)
+        .maybeSingle();
+      practice = data ?? null;
+    }
+    if (!practice && messagingServiceSid) {
+      const { data } = await db
+        .from("practices")
+        .select("id, name, integrations, twilio_phone_number")
+        .eq("messaging_service_sid", messagingServiceSid)
+        .maybeSingle();
+      practice = data ?? null;
+    }
 
     if (!practice) {
-      console.warn(`[TWILIO SMS] No practice for number ${to}`);
+      console.warn(
+        `[TWILIO SMS] No practice for number ${to} (mgsid=${messagingServiceSid})`,
+      );
       return twiml("This number is not currently active.");
     }
 
@@ -105,9 +143,53 @@ Deno.serve(async (req) => {
       `[TWILIO SMS] ${practice.name} | from=${from} | enquiry=${enquiryId} ${isNew ? "(new)" : "(existing)"}`,
     );
 
-    return twiml(`Thanks for your message! The team at ${practice.name} will get back to you shortly.`);
+    // Open / update a conversation row so the dashboard sees the live thread.
+    await db
+      .from("conversations")
+      .insert({
+        practice_id: practice.id,
+        contact_id: contact.id,
+        channel: "sms",
+        status: "active",
+        caller_name: contact.name,
+      });
+
+    // AI auto-reply — same brain as Hannah/Poppy on every other channel.
+    // Pulls full practice context (services, prices, practitioners, hours,
+    // locations) so the reply is tailored to the practice.
+    // deno-lint-ignore no-explicit-any
+    const integrations = (practice as any).integrations || {};
+    const aiEnabled = integrations.sms_ai_reply_enabled !== false;
+    if (aiEnabled) {
+      const fullPractice = await loadPractice(db, { practiceId: practice.id });
+      if (fullPractice) {
+        const practiceContext = buildPracticeContext(fullPractice);
+        const history = await getConversationHistory(db, contact.id, practice.id);
+        try {
+          const aiReply = await getAiReply({
+            agentId: fullPractice.elevenlabs_agent_id,
+            message: body,
+            practiceContext,
+            conversationHistory: history,
+            contactName: contact.name || "Unknown",
+            channel: "sms",
+          });
+          const sent = await sendSms(fullPractice, from, aiReply);
+          console.log(
+            `[TWILIO SMS] AI replied via ${sent.provider} | id=${sent.messageId} | status=${sent.status}`,
+          );
+          await appendReplyToEnquiry(db, enquiryId, aiReply, "sms");
+        } catch (e) {
+          console.error("[TWILIO SMS] AI auto-reply failed:", e);
+        }
+      }
+    }
+
+    // Empty TwiML — the AI reply (if any) was just sent via the API path
+    // above. Avoid double-replying via TwiML <Message>.
+    return twiml();
   } catch (err) {
     console.error("[TWILIO SMS ERROR]", err);
-    return twiml("Thanks for your message. We'll get back to you soon.");
+    return twiml();
   }
 });
