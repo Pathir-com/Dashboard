@@ -11,6 +11,55 @@ import PricingTab from './settings/PricingTab';
 import PracticeInfoTab from './settings/PracticeInfoTab';
 import IntegrationsTab from './settings/IntegrationsTab';
 
+/* Scrape-merge helpers. We never overwrite a populated field — only fill
+   gaps. That way re-running the scraper on a clinic that's already been
+   tuned by hand never blows away the manual edits. */
+function mergeScraperHours(current, scraped) {
+  const byDay = new Map((scraped || []).map((h) => [String(h.day || '').toLowerCase(), h]));
+  return (current || []).map((row) => {
+    const m = byDay.get(row.day.toLowerCase());
+    if (!m) return row;
+    return {
+      day: row.day,
+      is_open: !!m.is_open,
+      open_time: m.open_time || row.open_time,
+      close_time: m.close_time || row.close_time,
+    };
+  });
+}
+function mergeStaff(current, scraped) {
+  const existingByName = new Set((current || []).map((p) => (p.name || '').toLowerCase()));
+  const additions = (scraped || [])
+    .filter((p) => p?.name && !existingByName.has(p.name.toLowerCase()))
+    .map((p) => ({
+      name: p.name,
+      title: p.title || '',
+      credentials: p.credentials || '',
+      bio: p.bio || (p.specialty ? `Specialises in ${p.specialty}.` : ''),
+      services: [],
+    }));
+  return [...(current || []), ...additions];
+}
+function mergeServices(current, scraped) {
+  const existing = new Set((current || []).map((s) => (s.service_name || '').toLowerCase()));
+  const additions = (scraped || [])
+    .filter((s) => s?.name && !existing.has(s.name.toLowerCase()))
+    .map((s) => ({
+      service_name: s.name,
+      category: 'general',
+      price: parseScrapedPrice(s.price),
+      description: s.description || '',
+      notes: '',
+      is_from_price: typeof s.price === 'string' && /from/i.test(s.price),
+    }));
+  return [...(current || []), ...additions];
+}
+function parseScrapedPrice(raw) {
+  if (!raw) return '';
+  const m = String(raw).match(/£?(\d+(?:\.\d{1,2})?)/);
+  return m ? m[1] : '';
+}
+
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 const DEFAULT_HOURS = DAYS.map(day => ({
   day,
@@ -148,6 +197,32 @@ export default function ClinicSettings({ practice, onUpdate, activeTab, onTabCha
             integrations={integrations}
             practiceType={practiceType} setPracticeType={setPracticeType}
             practice={practice}
+            onScraped={(extracted) => {
+              /* Re-scrape from Settings should update every section the
+                 scraper covers — basics here, plus practitioners, prices,
+                 hours, agent_tone, clinic_guidelines. We hand it to every
+                 setter that owns a slice; the auto-save effect picks them
+                 all up in one debounced round-trip. */
+              setDetails((prev) => ({
+                ...prev,
+                name:    extracted.name    || prev.name,
+                phone:   extracted.phone   || prev.phone,
+                email:   extracted.email   || prev.email,
+                address: extracted.address || prev.address,
+                website: extracted.appointment_booking_url || prev.website,
+              }));
+              if (extracted.business_hours?.length > 0) {
+                setHours((prev) => mergeScraperHours(prev, extracted.business_hours));
+              }
+              if (extracted.staff?.length > 0) {
+                setPractitioners((prev) => mergeStaff(prev, extracted.staff));
+              }
+              if (extracted.services?.length > 0) {
+                setPriceList((prev) => mergeServices(prev, extracted.services));
+              }
+              if (extracted.description) setUsps((prev) => prev || extracted.description);
+              if (extracted.clinic_guidelines) setClinicGuidelines((prev) => prev || extracted.clinic_guidelines);
+            }}
           />
         )}
           {activeTab === 'team' && (

@@ -4,6 +4,8 @@ import { useAuth } from '@/lib/AuthContext';
 import { createPractice, getMyPractice, updatePractice } from '@/lib/supabaseData';
 import { supabase } from '@/lib/supabase';
 import { toast } from 'sonner';
+import WebsiteScraper from '@/components/onboarding/WebsiteScraper';
+import { buildPracticePatch } from '@/lib/applyScrapedClinic';
 
 const STORAGE_KEY = 'pathir_onboarding_draft';
 
@@ -16,6 +18,25 @@ const DEFAULT_HOURS = [
   { day: 'Saturday', is_open: false, open_time: '09:00', close_time: '13:00' },
   { day: 'Sunday', is_open: false, open_time: '09:00', close_time: '17:00' },
 ];
+
+/* Reshape whatever the scraper returned into the 7-row {day,is_open,open_time,
+   close_time} structure the form expects, falling back to the user's current
+   row if the scraper didn't have an entry for that day. */
+function normaliseHoursForUi(scraperHours, currentHours) {
+  const byDay = new Map(
+    (scraperHours || []).map((h) => [String(h.day || '').toLowerCase(), h]),
+  );
+  return (currentHours || DEFAULT_HOURS).map((row) => {
+    const m = byDay.get(row.day.toLowerCase());
+    if (!m) return row;
+    return {
+      day: row.day,
+      is_open: !!m.is_open,
+      open_time: m.open_time || row.open_time,
+      close_time: m.close_time || row.close_time,
+    };
+  });
+}
 
 const INDUSTRIES = [
   {
@@ -69,6 +90,11 @@ export default function Onboarding() {
     practice_type: savedDraft?.practice_type || 'Private',
     opening_hours: savedDraft?.opening_hours || DEFAULT_HOURS,
     mobile_number: savedDraft?.mobile_number || '',
+    /* Carry the full scraper output forward so Step 3's "Create Clinic"
+       can persist the rich JSONB fields (services, staff, hours,
+       agent_tone, clinic_guidelines) in the same insert — no separate
+       update round-trip and no half-filled state if the user bails. */
+    scraped: savedDraft?.scraped || null,
   });
 
   useEffect(() => {
@@ -94,9 +120,15 @@ export default function Onboarding() {
     }
     setLoading(true);
     try {
+      /* Merge any fields the scraper found that the user didn't override.
+         The form values win whenever the user has typed something — we
+         never overwrite explicit edits. Scraper-only fields (services,
+         staff, agent_tone, clinic_guidelines) flow through untouched. */
+      const scrapedPatch = form.scraped ? buildPracticePatch(form.scraped) : {};
       const practice = await createPractice({
+        ...scrapedPatch,
         name: form.name,
-        address: form.address,
+        address: form.address || scrapedPatch.address || '',
         email: form.email,
         website: form.website,
         practice_type: form.practice_type,
@@ -217,7 +249,30 @@ export default function Onboarding() {
           {step === 2 && (
             <>
               <h2 className="text-xl font-semibold text-slate-900 mb-1">Clinic Details</h2>
-              <p className="text-slate-500 text-sm mb-6">The AI introduces itself with this name on every call, chat, and SMS.</p>
+              <p className="text-slate-500 text-sm mb-6">Paste your website and we&apos;ll fill the rest in for you. Or skip and type it manually below.</p>
+
+              <div className="mb-6 -mx-2 sm:mx-0">
+                <WebsiteScraper
+                  initialUrl={form.website}
+                  industry={form.industry}
+                  onExtracted={(extracted) => {
+                    /* Pre-fill any blank form field from the scraped data;
+                       never overwrite what the user has already typed. */
+                    setForm((prev) => ({
+                      ...prev,
+                      name: prev.name || extracted.name || '',
+                      address: prev.address || extracted.address || '',
+                      email: prev.email || extracted.email || '',
+                      website: extracted.appointment_booking_url || prev.website || '',
+                      opening_hours: (extracted.business_hours && extracted.business_hours.length > 0)
+                        ? normaliseHoursForUi(extracted.business_hours, prev.opening_hours)
+                        : prev.opening_hours,
+                      scraped: extracted,
+                    }));
+                    toast.success('Pre-filled from your website. Edit anything that needs tweaking.');
+                  }}
+                />
+              </div>
 
               <div className="space-y-4">
                 <div>

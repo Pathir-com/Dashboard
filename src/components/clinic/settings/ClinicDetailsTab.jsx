@@ -30,10 +30,11 @@ import { Phone, Mail, Copy, CheckCircle2 } from 'lucide-react';
 import { toast } from 'sonner';
 import { supabase } from '@/lib/supabase';
 import HolidayHours from './HolidayHours';
+import WebsiteScraper from '@/components/onboarding/WebsiteScraper';
 
 const DAYS = ['Monday', 'Tuesday', 'Wednesday', 'Thursday', 'Friday', 'Saturday', 'Sunday'];
 
-export default function ClinicDetailsTab({ details, setDetails, hours, setHours, holidayHours, setHolidayHours, integrations, practiceType, setPracticeType, practice }) {
+export default function ClinicDetailsTab({ details, setDetails, hours, setHours, holidayHours, setHolidayHours, integrations, practiceType, setPracticeType, practice, onScraped }) {
   const [aiPhoneCopied, setAiPhoneCopied] = useState(false);
 
   /* ── Treatment categories (verticals) come from industry_templates.
@@ -181,6 +182,25 @@ export default function ClinicDetailsTab({ details, setDetails, hours, setHours,
             <Input value={details.website} onChange={e => setDetails({ ...details, website: e.target.value })} placeholder="https://yourclinic.co.uk" className="mt-1.5" />
           </div>
         </div>
+
+        {onScraped && (
+          <div className="mt-6 pt-6 border-t border-slate-100">
+            <p className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-3">Auto-fill from your website</p>
+            <WebsiteScraper
+              practiceId={practice?.id}
+              initialUrl={details.website}
+              industry={practice?.industry}
+              variant="compact"
+              onExtracted={(extracted) => {
+                onScraped(extracted);
+                toast.success('Settings updated from your website. Anything still missing, add it manually.');
+              }}
+            />
+            <p className="text-xs text-slate-400 mt-2">
+              Updates basics, hours, services, staff, and clinic guidelines. We never overwrite values you&apos;ve already set.
+            </p>
+          </div>
+        )}
       </section>
 
       {/* Opening Hours */}

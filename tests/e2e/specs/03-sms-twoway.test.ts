@@ -121,15 +121,18 @@ describe(`Two-way SMS via trial sandbox [${runId()}]`, () => {
     const sb = await admin();
     const { data: enquiries } = await sb
       .from("enquiries")
-      .select("id, channel")
+      .select("id, source")
       .eq("practice_id", practice.id)
       .order("created_at", { ascending: false })
       .limit(1);
-    expect(enquiries?.[0]?.channel).toBe("sms");
+    /* The enquiries table tracks channel via `source`; conversations
+       table uses `channel`. We check the enquiry side because that's
+       what the dashboard renders. */
+    expect(enquiries?.[0]?.source).toBe("sms");
 
     const { data: messages } = await sb
       .from("enquiry_messages")
-      .select("role, content")
+      .select("role, message")
       .eq("enquiry_id", enquiries![0].id)
       .order("created_at", { ascending: true });
     const roles = (messages || []).map((m) => m.role);
