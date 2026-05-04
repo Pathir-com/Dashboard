@@ -180,6 +180,40 @@ describe(`scrape-website function [${runId()}]`, () => {
     }
     expect([200, 502]).toContain(res.status);
   }, 30_000);
+
+  it("live extraction returns real values for a real clinic site", async () => {
+    /* Regression guard for the actual extraction quality. We hit Berkeley
+       Hair Clinic (a known live UK site) and assert that the LLM came
+       back with non-empty values for fields that are visibly on that
+       site's homepage: name, phone, address, multi-day business_hours,
+       and at least one service. If the ElevenLabs extractor agent is
+       deleted, mis-prompted, or returns empty fields, this test fails
+       loudly. Skipped when no extractor backend is configured. */
+    const jwt = await getUserJwt(user);
+    const res = await invokeFunction(
+      "scrape-website",
+      { practiceId: null, url: "https://www.berkeleyhairclinic.com" },
+      jwt,
+    );
+    if (res.status === 404 && /function.*not\s+found/i.test(JSON.stringify(res.body))) {
+      console.log("[08-scraper] scrape-website not deployed — skipping live-extraction");
+      expect(true).toBe(true);
+      return;
+    }
+    expect(res.status).toBe(200);
+    if (res.body.mode === "stub") {
+      console.log("[08-scraper] stub mode — skipping live-extraction");
+      expect(true).toBe(true);
+      return;
+    }
+    expect(["elevenlabs", "anthropic"]).toContain(res.body.mode);
+    const e = res.body.extracted;
+    expect(e.name.toLowerCase()).toContain("berkeley");
+    expect(e.phone.length).toBeGreaterThan(6);
+    expect(e.address.toLowerCase()).toMatch(/london|harley/);
+    expect(e.business_hours.length).toBeGreaterThanOrEqual(5);
+    expect(e.services.length).toBeGreaterThanOrEqual(1);
+  }, 60_000);
 });
 
 afterAll(async () => {
