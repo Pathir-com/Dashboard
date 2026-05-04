@@ -215,6 +215,10 @@ Deno.serve(async (req) => {
             practiceContext,
             conversationHistory: history,
             contactName: contact.name || "Unknown",
+            /* Meta channels don't always have a phone (the contact is
+               identified by FB PSID / IG ID). Pass it through if our
+               cross-channel matcher backfilled it from a prior call. */
+            contactPhone: contact.phone || null,
             channel,
             db,
             practiceId: practice.id,

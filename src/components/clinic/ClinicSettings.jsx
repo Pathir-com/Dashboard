@@ -186,9 +186,14 @@ export default function ClinicSettings({ practice, onUpdate, activeTab, onTabCha
         </div>
       </div>
 
-      {/* Tab content */}
+      {/* Tab content. Pricing has many columns (category, service, price,
+          from-flag, description, notes, delete) — with the default
+          max-w-3xl shell (~768px) every column is squeezed to ~60px and
+          textareas wrap awkwardly. We widen the shell on the pricing tab
+          so the price-list rows breathe; other tabs keep the comfortable
+          reading width. */}
       <div className="flex-1 overflow-y-auto">
-        <div className="px-8 py-10 max-w-3xl">
+        <div className={`px-8 py-10 ${activeTab === 'pricing' ? 'max-w-6xl' : 'max-w-3xl'}`}>
           {activeTab === 'clinic' && (
           <ClinicDetailsTab
             details={details} setDetails={setDetails}

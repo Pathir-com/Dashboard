@@ -274,6 +274,48 @@ export default function Onboarding() {
                 />
               </div>
 
+              {/* Team page: clinics with bigger rosters list practitioners on a
+                  separate /team or /our-staff page. We let the user paste that
+                  URL to pull more practitioners without rerunning the main
+                  scrape. Only staff are merged — basics already done. */}
+              {form.scraped && (
+                <div className="mb-6 p-4 rounded-lg border border-slate-200 bg-slate-50">
+                  <p className="text-sm font-medium text-slate-800 mb-1">
+                    Got a separate team or staff page?
+                  </p>
+                  <p className="text-xs text-slate-500 mb-3">
+                    {form.scraped.staff?.length || 0} practitioner{(form.scraped.staff?.length || 0) === 1 ? '' : 's'} found so far. Paste a /team or /our-staff URL to pull more — we&apos;ll only add practitioners not already on the list.
+                  </p>
+                  <WebsiteScraper
+                    industry={form.industry}
+                    variant="compact"
+                    onExtracted={(extra) => {
+                      const incoming = extra?.staff || [];
+                      if (incoming.length === 0) {
+                        toast.message('That page didn’t list any new practitioners.');
+                        return;
+                      }
+                      setForm((prev) => {
+                        const known = new Set(
+                          (prev.scraped?.staff || []).map((p) => (p.name || '').toLowerCase()),
+                        );
+                        const additions = incoming.filter(
+                          (p) => p?.name && !known.has(p.name.toLowerCase()),
+                        );
+                        return {
+                          ...prev,
+                          scraped: {
+                            ...(prev.scraped || {}),
+                            staff: [...(prev.scraped?.staff || []), ...additions],
+                          },
+                        };
+                      });
+                      toast.success(`Added ${incoming.length} practitioner${incoming.length === 1 ? '' : 's'} from that page.`);
+                    }}
+                  />
+                </div>
+              )}
+
               <div className="space-y-4">
                 <div>
                   <label className="block text-sm font-medium text-slate-700 mb-1">Clinic Name *</label>

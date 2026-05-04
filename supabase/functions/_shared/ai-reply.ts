@@ -50,11 +50,11 @@ export type Channel =
   | "email";
 
 const CHANNEL_INSTRUCTION: Record<Channel, string> = {
-  sms:        "This is an SMS conversation. Reply concisely (under 320 characters where possible). No markdown. No tool calls.",
-  facebook:   "This is a Facebook Messenger conversation. Reply concisely (under 500 characters). Friendly, casual tone.",
-  instagram:  "This is an Instagram DM. Reply concisely (under 500 characters). Friendly, casual tone.",
-  web_chat:   "This is a website chat conversation. Reply concisely (under 500 characters). The visitor is on the clinic's website and may be evaluating the clinic.",
-  email:      "This is an email conversation. Reply in a structured, professional tone. Use short paragraphs, no markdown headers.",
+  sms:        "SMS conversation. Reply in 1–2 short, natural sentences. Under 280 characters. No markdown, no tool calls. Sound like a real person at reception, not a script.",
+  facebook:   "Facebook Messenger. 1–2 short, natural sentences. Under 400 characters. Friendly and human, never stiff.",
+  instagram:  "Instagram DM. 1–2 short, natural sentences. Under 400 characters. Friendly and human, never stiff.",
+  web_chat:   "Website chat. 1–2 short, natural sentences. The visitor may be evaluating the clinic — be warm and concrete.",
+  email:      "Email. Reply in short paragraphs, conversational but professional. No markdown headers. Keep it brief.",
 };
 
 export interface AiReplyOptions {
@@ -64,6 +64,11 @@ export interface AiReplyOptions {
   practiceContext: Record<string, any>;
   conversationHistory: string | null;
   contactName: string;
+  /** The contact's phone number, when known. Inbound channels (SMS, Twilio,
+   *  Facebook PSID-mapped, etc.) all know who's writing — passing this in
+   *  lets the prompt explicitly tell the agent NOT to ask for the phone
+   *  number again. Optional so callers without phone context still work. */
+  contactPhone?: string | null;
   channel: Channel;
   /** Total WebSocket timeout in ms. Default 15s. */
   timeoutMs?: number;
@@ -95,6 +100,7 @@ export async function getAiReply(opts: AiReplyOptions): Promise<string> {
         db: opts.db,
         practiceId: opts.practiceId,
         contactName,
+        contactPhone: opts.contactPhone || null,
         channel: opts.channel,
         conversationHistory: opts.conversationHistory,
         practiceContext,
@@ -129,6 +135,7 @@ interface BuildPromptOptions {
   db: SupabaseClient;
   practiceId: string;
   contactName: string;
+  contactPhone: string | null;
   channel: Channel;
   conversationHistory: string | null;
   // deno-lint-ignore no-explicit-any
@@ -181,7 +188,14 @@ async function buildFreshPrompt(opts: BuildPromptOptions): Promise<string> {
 
   const patientLine = opts.contactName && opts.contactName !== "Unknown"
     ? `Patient: ${opts.contactName}.`
-    : "Patient name unknown — ask politely if booking is needed.";
+    : "Patient name unknown — ask politely once if booking is needed (never twice).";
+
+  /* Phone is known on every inbound text channel — the lookup happens by
+     phone number. Tell the agent explicitly so it stops asking patients
+     to re-state their own number, which patients found jarring. */
+  const phoneKnownLine = opts.contactPhone
+    ? `We already have this patient's phone (${opts.contactPhone}). NEVER ask for their phone, NEVER ask them to confirm it, NEVER repeat it back to them.`
+    : "Patient phone is not on file — only ask for it if they want a callback or booking confirmation, and only once.";
 
   // The override prompt explicitly authorises direct catalog answering
   // for text channels (the provisioned voice prompt instead routes
@@ -192,8 +206,13 @@ async function buildFreshPrompt(opts: BuildPromptOptions): Promise<string> {
     `Tone: ${tone}.`,
     "",
     `CHANNEL DIRECTIVES — ${channelInstruction}`,
-    "Use the live catalog below to answer questions DIRECTLY. Quote exact prices, durations, practitioner names, and locations from it. Never say 'let me check' or 'I'll look that up' — the data IS this prompt. Only ask for the patient's name + phone when actually booking an appointment.",
-    "Never invent prices, services, or practitioners that aren't listed below. If something isn't here, say so and offer to take their details for a callback.",
+    "Use the live catalog below to answer questions DIRECTLY. Quote exact prices, durations, practitioner names, and locations from it. Never say 'let me check' or 'I'll look that up' — the data IS this prompt.",
+    "Never invent prices, services, or practitioners that aren't listed below. If something isn't here, say so plainly in a sentence and offer to take a message.",
+    "",
+    "STYLE — Short. Natural. Human. Use everyday language. Contractions are fine. Vary your phrasing — never start two replies the same way. One or two sentences per reply unless they ask a multi-part question. No bullet lists unless they explicitly ask for one. No formal stiff phrases like 'I trust this finds you well' or 'kindly note'.",
+    "",
+    "ANTI-REPETITION RULES — Read RECENT CONVERSATION HISTORY before replying. (1) Never re-ask anything the patient has already answered. (2) Never re-state information you've already given them this conversation. (3) If they ignore part of a question, ask only the missing piece, not the whole thing again. (4) If you greeted them earlier, do NOT greet them again — go straight to answering.",
+    `${phoneKnownLine}`,
     "",
     `=== ${practice.name.toUpperCase()} — LIVE DATABASE SNAPSHOT ===`,
     "",

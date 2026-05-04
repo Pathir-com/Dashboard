@@ -763,16 +763,63 @@ export default function IntegrationsTab({
     );
   }
 
+  /* Hide channels the practice isn't using yet — most clinics start with
+     phone + web chat and never touch Instagram. We surface only:
+       (a) channels the practice has connected (isConnected[key])
+       (b) channels they've actively toggled on (integrations[key])
+       (c) channels currently expanded for setup
+     The "Show all channels" affordance reveals the rest if they ever want
+     to connect a new one. */
+  const [showAllChannels, setShowAllChannels] = useState(false);
+  const visibleChannels = showAllChannels
+    ? CHANNELS
+    : CHANNELS.filter(
+        (ch) => isConnected[ch.key] || integrations[ch.key] || expanded === ch.key,
+      );
+  const hiddenChannelCount = CHANNELS.length - visibleChannels.length;
+
   return (
     <div className="space-y-8">
       {/* Communication Channels */}
       <section>
-        <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest mb-4">Communication Channels</h2>
+        <div className="flex items-baseline justify-between mb-4">
+          <h2 className="text-xs font-semibold text-slate-400 uppercase tracking-widest">Communication Channels</h2>
+          {!showAllChannels && hiddenChannelCount > 0 && (
+            <button
+              type="button"
+              onClick={() => setShowAllChannels(true)}
+              className="text-xs text-slate-500 hover:text-slate-900 transition-colors"
+            >
+              Show {hiddenChannelCount} more
+            </button>
+          )}
+          {showAllChannels && (
+            <button
+              type="button"
+              onClick={() => setShowAllChannels(false)}
+              className="text-xs text-slate-500 hover:text-slate-900 transition-colors"
+            >
+              Hide unused
+            </button>
+          )}
+        </div>
         <div className="grid grid-cols-2 sm:grid-cols-3 gap-3">
-          {CHANNELS.flatMap(ch => [
+          {visibleChannels.flatMap(ch => [
             renderCard(ch, handleChannelClick),
             ...(expanded === ch.key ? [<div key={`${ch.key}-panel`} className="col-span-2 sm:col-span-3">{renderPanel()}</div>] : []),
           ])}
+          {visibleChannels.length === 0 && (
+            <div className="col-span-2 sm:col-span-3 rounded-lg border border-dashed border-slate-200 bg-slate-50 px-4 py-6 text-center">
+              <p className="text-sm text-slate-500">No channels connected yet.</p>
+              <button
+                type="button"
+                onClick={() => setShowAllChannels(true)}
+                className="mt-2 text-sm text-slate-900 underline-offset-2 hover:underline"
+              >
+                Browse channels
+              </button>
+            </div>
+          )}
         </div>
       </section>
 
