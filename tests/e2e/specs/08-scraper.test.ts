@@ -153,7 +153,7 @@ describe(`scrape-website function [${runId()}]`, () => {
     }
     expect(res.status, JSON.stringify(res.body)).toBe(200);
     expect(res.body.ok).toBe(true);
-    expect(["live", "stub"]).toContain(res.body.mode);
+    expect(["elevenlabs", "anthropic", "stub"]).toContain(res.body.mode);
     /* Schema: every required field present, even if empty. */
     const e = res.body.extracted;
     expect(typeof e.name).toBe("string");

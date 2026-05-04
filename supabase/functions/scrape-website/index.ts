@@ -2,50 +2,26 @@
  * Purpose:
  *   Scrape a clinic website and return a structured summary that the
  *   onboarding form (and Settings → Clinic Details) uses to auto-fill
- *   practice fields. Mirrors the JSON shape that Base44's clinic
- *   "ClinicFlow AI" extractor used so the same React handler works in
- *   both contexts.
+ *   practice fields.
  *
- * Auth:
- *   JWT required. The user must own the practice they're scraping for.
+ * Backend selection (in order of preference):
+ *   1. ElevenLabs ConvAI extractor agent (`SCRAPER_AGENT_ID` env) —
+ *      reuses the team's ConvAI minutes; default and recommended.
+ *   2. Anthropic Claude (`ANTHROPIC_API_KEY` env) — fallback / for higher
+ *      extraction quality if needed.
+ *   3. Stub (neither configured) — returns empty schema with the
+ *      URL-derived clinic name so the frontend works in development.
  *
- * Body:
- *   {
- *     practiceId: uuid,         // for ownership check + audit
- *     url: string,              // clinic website URL (with or without scheme)
- *     industry?: 'dental' | 'hair_transplant',  // hint for the LLM (optional)
- *   }
+ * Auth: JWT required. If practiceId is supplied, the caller must own it
+ *       (Settings tab path). Onboarding sends practiceId=null since the
+ *       practice row doesn't exist yet.
  *
- * Response:
- *   {
- *     ok: true,
- *     extracted: {
- *       name, phone, email, address, description,
- *       services: [{name, description, price?}],
- *       business_hours: [{day, is_open, open_time, close_time}],
- *       staff: [{name, title, credentials, specialty, bio}],
- *       faqs: [{question, answer}],
- *       insurance_accepted: [string],
- *       appointment_booking_url: string,
- *       agent_tone, clinic_guidelines
- *     },
- *     mode: 'live' | 'stub',    // 'stub' if ANTHROPIC_API_KEY missing
- *     fetched_chars: number,    // length of HTML text we sent to the LLM
- *   }
- *
- * Backend:
- *   - Server-side fetch of the URL (5s timeout, follows redirects)
- *   - Strip HTML tags + scripts/styles, keep visible text
- *   - Send the cleaned text to Claude Haiku 4.5 with a JSON-schema
- *     response_format constraint
- *   - Returns the structured object directly
- *
- * If ANTHROPIC_API_KEY is not set in Supabase secrets the function
- * runs in 'stub' mode and returns an empty-skeleton response so the
- * frontend can still be exercised end-to-end during development.
+ * Body:  { practiceId: uuid|null, url: string, industry?: 'dental'|'hair_transplant' }
+ * Resp:  { ok, mode: 'elevenlabs'|'anthropic'|'stub', extracted: {...}, fetched_chars }
  *
  * Changes:
- *   2026-05-04: Initial.
+ *   2026-05-04: Add ElevenLabs ConvAI backend, make it the default.
+ *   2026-05-04: Initial Anthropic-only implementation.
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
@@ -56,8 +32,12 @@ const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
 const ANTHROPIC_API_KEY = Deno.env.get("ANTHROPIC_API_KEY") || "";
 const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-haiku-4-5";
+const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY") || "";
+const SCRAPER_AGENT_ID = Deno.env.get("SCRAPER_AGENT_ID") || "";
+
 const FETCH_TIMEOUT_MS = 12_000;
-const MAX_HTML_CHARS = 80_000; // cap before sending to LLM
+const MAX_HTML_CHARS = 60_000;
+const WS_TIMEOUT_MS = 45_000;
 
 interface ExtractedClinic {
   name: string;
@@ -98,31 +78,21 @@ Deno.serve(async (req) => {
     const { practiceId, url, industry } = await req.json();
     if (!url) return jsonResp({ error: "url is required" }, 400);
 
-    /* During onboarding Step 2 the practice row doesn't exist yet — the
-       user has a valid JWT but nothing to own. We let practiceId be null
-       in that case and skip the ownership check; the result goes back
-       to the caller's local state and the practice row is created in
-       Step 3 with the auto-filled values already merged in.
-       Once a practice exists, we DO require ownership (Settings tab). */
     let targetIndustry = industry || "dental";
     if (practiceId) {
       const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
       const { data: practice, error: pErr } = await db
         .from("practices")
-        .select("id, name, industry, owner_id")
+        .select("id, industry, owner_id")
         .eq("id", practiceId)
         .eq("owner_id", user.id)
         .single();
-
       if (pErr || !practice) {
         return jsonResp({ error: "Practice not found or not owned by you" }, 404);
       }
       targetIndustry = industry || practice.industry || "dental";
     }
 
-    /* Fetch the page. Generous timeout, follow redirects, plausible UA so
-       sites don't 403 us. We don't render JS — for clinic marketing pages
-       static HTML is almost always enough. */
     const cleanUrl = url.startsWith("http") ? url : `https://${url}`;
     let html = "";
     try {
@@ -131,8 +101,7 @@ Deno.serve(async (req) => {
       const r = await fetch(cleanUrl, {
         redirect: "follow",
         headers: {
-          "User-Agent":
-            "Mozilla/5.0 (compatible; Pathir-Scraper/1.0; +https://pathir.com)",
+          "User-Agent": "Mozilla/5.0 (compatible; Pathir-Scraper/1.0; +https://pathir.com)",
           Accept: "text/html,application/xhtml+xml",
         },
         signal: ctrl.signal,
@@ -141,30 +110,33 @@ Deno.serve(async (req) => {
       html = await r.text();
     } catch (e) {
       console.error("[SCRAPE] fetch failed:", (e as Error).message);
-      return jsonResp({
-        error: `Could not fetch ${cleanUrl}: ${(e as Error).message}`,
-      }, 502);
+      return jsonResp({ error: `Could not fetch ${cleanUrl}: ${(e as Error).message}` }, 502);
     }
-
     const text = stripHtml(html).slice(0, MAX_HTML_CHARS);
 
-    if (!ANTHROPIC_API_KEY) {
-      console.warn("[SCRAPE] ANTHROPIC_API_KEY not set — returning stub");
-      return jsonResp({
-        ok: true,
-        mode: "stub",
-        fetched_chars: text.length,
-        extracted: { ...EMPTY, name: deriveNameFromUrl(cleanUrl) },
-      });
+    /* Backend selection. ElevenLabs first (uses team's existing credits),
+       Anthropic second, stub last. Each backend returns the same shape. */
+    if (SCRAPER_AGENT_ID && ELEVENLABS_API_KEY) {
+      try {
+        const extracted = await extractWithElevenLabs(text, cleanUrl, targetIndustry);
+        return jsonResp({ ok: true, mode: "elevenlabs", fetched_chars: text.length, extracted });
+      } catch (e) {
+        console.error("[SCRAPE] ElevenLabs path failed:", (e as Error).message);
+        // Fall through to Anthropic if available, else stub
+      }
     }
 
-    const extracted = await extractWithClaude(text, cleanUrl, targetIndustry);
+    if (ANTHROPIC_API_KEY) {
+      const extracted = await extractWithClaude(text, cleanUrl, targetIndustry);
+      return jsonResp({ ok: true, mode: "anthropic", fetched_chars: text.length, extracted });
+    }
 
+    console.warn("[SCRAPE] No extractor configured — returning stub");
     return jsonResp({
       ok: true,
-      mode: "live",
+      mode: "stub",
       fetched_chars: text.length,
-      extracted,
+      extracted: { ...EMPTY, name: deriveNameFromUrl(cleanUrl) },
     });
   } catch (err) {
     console.error("[SCRAPE ERROR]", err);
@@ -172,7 +144,7 @@ Deno.serve(async (req) => {
   }
 });
 
-/** Strip script/style/HTML, collapse whitespace. Cheap, predictable. */
+/** Strip script/style/HTML, collapse whitespace. */
 function stripHtml(html: string): string {
   return html
     .replace(/<script[\s\S]*?<\/script>/gi, " ")
@@ -180,14 +152,9 @@ function stripHtml(html: string): string {
     .replace(/<noscript[\s\S]*?<\/noscript>/gi, " ")
     .replace(/<!--[\s\S]*?-->/g, " ")
     .replace(/<[^>]+>/g, " ")
-    .replace(/&nbsp;/g, " ")
-    .replace(/&amp;/g, "&")
-    .replace(/&lt;/g, "<")
-    .replace(/&gt;/g, ">")
-    .replace(/&#39;|&apos;/g, "'")
-    .replace(/&quot;/g, '"')
-    .replace(/\s+/g, " ")
-    .trim();
+    .replace(/&nbsp;/g, " ").replace(/&amp;/g, "&").replace(/&lt;/g, "<")
+    .replace(/&gt;/g, ">").replace(/&#39;|&apos;/g, "'").replace(/&quot;/g, '"')
+    .replace(/\s+/g, " ").trim();
 }
 
 function deriveNameFromUrl(u: string): string {
@@ -196,10 +163,140 @@ function deriveNameFromUrl(u: string): string {
     return host.split(".")[0]
       .replace(/[-_]/g, " ")
       .replace(/\b\w/g, (c) => c.toUpperCase());
-  } catch {
-    return "";
-  }
+  } catch { return ""; }
 }
+
+/* ─────────────────────────────────────────────────────────────────────────
+   ElevenLabs ConvAI WebSocket extraction.
+
+   We open a single conversation, override the agent's first_message to
+   empty (skips the auto-greeting → faster), send the page text as a
+   user_message, capture the first agent_response, parse JSON. Falls
+   back to {} if the response can't be parsed cleanly.
+   ──────────────────────────────────────────────────────────────────────── */
+
+async function extractWithElevenLabs(
+  pageText: string,
+  url: string,
+  industry: string,
+): Promise<ExtractedClinic> {
+  const verticalHint = industry === "hair_transplant"
+    ? "Hair transplant clinic — surgeons, FUE/DHI/PRP, graft counts. Use 'Client'."
+    : "Dental practice — dentists, hygienists, check-up/cosmetic/emergency.";
+
+  const userMessage =
+    `Source URL: ${url}\nVertical hint: ${verticalHint}\n\nPage text:\n${pageText}\n\n` +
+    `Return ONLY the JSON object. No prose.`;
+
+  // Get a signed WebSocket URL for our extractor agent.
+  const sigRes = await fetch(
+    `https://api.elevenlabs.io/v1/convai/conversation/get-signed-url?agent_id=${SCRAPER_AGENT_ID}`,
+    { headers: { "xi-api-key": ELEVENLABS_API_KEY } },
+  );
+  if (!sigRes.ok) {
+    throw new Error(`Signed-URL fetch ${sigRes.status}: ${(await sigRes.text()).slice(0, 200)}`);
+  }
+  const { signed_url } = await sigRes.json() as { signed_url: string };
+
+  const json = await convaiOneShot(signed_url, userMessage);
+  return { ...EMPTY, ...json };
+}
+
+/** Open a ConvAI WS, send one user_message, wait for the agent_response,
+ *  parse the first JSON object found, close. Returns parsed object or {}. */
+function convaiOneShot(signedUrl: string, userMessage: string): Promise<Record<string, unknown>> {
+  return new Promise((resolve, reject) => {
+    const ws = new WebSocket(signedUrl);
+    let agentText = "";
+    let resolved = false;
+
+    const finish = (val: Record<string, unknown> | null, err?: Error) => {
+      if (resolved) return;
+      resolved = true;
+      try { ws.close(); } catch { /* */ }
+      if (err) return reject(err);
+      resolve(val || {});
+    };
+
+    const timer = setTimeout(
+      () => finish(null, new Error(`ConvAI WS timeout after ${WS_TIMEOUT_MS}ms`)),
+      WS_TIMEOUT_MS,
+    );
+
+    ws.onopen = () => {
+      ws.send(JSON.stringify({
+        type: "conversation_initiation_client_data",
+        conversation_config_override: {
+          agent: { first_message: "" }, // skip greeting
+        },
+      }));
+    };
+
+    ws.onmessage = (evt) => {
+      let msg: Record<string, unknown>;
+      try { msg = JSON.parse(typeof evt.data === "string" ? evt.data : ""); }
+      catch { return; }
+
+      const type = msg.type as string;
+      if (type === "conversation_initiation_metadata") {
+        ws.send(JSON.stringify({ type: "user_message", text: userMessage }));
+        return;
+      }
+      if (type === "agent_response") {
+        const ev = msg.agent_response_event as { agent_response?: string } | undefined;
+        agentText = ev?.agent_response || agentText;
+        const parsed = extractFirstJsonObject(agentText);
+        if (parsed) {
+          clearTimeout(timer);
+          finish(parsed);
+        }
+        return;
+      }
+      if (type === "ping") {
+        const ev = msg.ping_event as { event_id?: number } | undefined;
+        ws.send(JSON.stringify({ type: "pong", event_id: ev?.event_id }));
+      }
+    };
+
+    ws.onerror = () => {
+      clearTimeout(timer);
+      finish(null, new Error("ConvAI WS error"));
+    };
+    ws.onclose = () => {
+      clearTimeout(timer);
+      const parsed = extractFirstJsonObject(agentText);
+      finish(parsed || {});
+    };
+  });
+}
+
+/** Find the first balanced JSON object in a string and return it parsed,
+ *  or null if no object is present / parse fails. Handles markdown
+ *  fences and prose-wrapped responses gracefully. */
+function extractFirstJsonObject(s: string): Record<string, unknown> | null {
+  if (!s) return null;
+  const stripped = s.replace(/```(?:json)?\s*/gi, "").replace(/```/g, "");
+  let depth = 0, start = -1;
+  for (let i = 0; i < stripped.length; i++) {
+    const c = stripped[i];
+    if (c === "{") {
+      if (depth === 0) start = i;
+      depth++;
+    } else if (c === "}") {
+      depth--;
+      if (depth === 0 && start >= 0) {
+        const candidate = stripped.slice(start, i + 1);
+        try { return JSON.parse(candidate); } catch { start = -1; }
+      }
+    }
+  }
+  return null;
+}
+
+/* ─────────────────────────────────────────────────────────────────────────
+   Anthropic fallback — used when SCRAPER_AGENT_ID isn't set or ElevenLabs
+   call fails. Forced tool-call for strict JSON.
+   ──────────────────────────────────────────────────────────────────────── */
 
 async function extractWithClaude(
   pageText: string,
@@ -207,54 +304,39 @@ async function extractWithClaude(
   industry: string,
 ): Promise<ExtractedClinic> {
   const verticalHint = industry === "hair_transplant"
-    ? "This is a hair transplant clinic. Surgeons (not dentists), procedures (FUE, DHI, PRP, beard/eyebrow transplants), graft counts. Use 'Client' not 'Patient'."
-    : "This is a dental practice. Dentists, hygienists, services (check-up, hygiene, cosmetic, emergency).";
+    ? "This is a hair transplant clinic. Surgeons, FUE/DHI/PRP. Use 'Client'."
+    : "This is a dental practice. Dentists, hygienists.";
 
-  const systemPrompt = `You extract structured information about a UK healthcare clinic from its website. Return ONLY a single JSON object matching the schema. No prose.
+  const systemPrompt = `You extract structured information about a UK healthcare clinic from its website. Return ONLY a single JSON object via the save_clinic tool.
 
 ${verticalHint}
 
 Rules:
-- If a field is not on the page, return an empty string or empty array — never guess.
-- Phone numbers: keep the raw format from the page; do not normalise.
-- business_hours: include all 7 days. is_open=false for closed days.
-- services: prefer the clinic's own naming. Include description if visible. Include price as text (e.g. "from £85") if visible.
-- staff: include credentials (e.g. "GDC 12345", "BDS", "FRCS") if visible.
-- agent_tone: a short instruction (one sentence) that captures the clinic's brand voice from the website copy — formal/warm/casual/professional. This goes into our AI agent's system prompt.
-- clinic_guidelines: any clinic policies that the AI agent should know (cancellation, late arrivals, payment terms, urgent care policy). Empty string if none on the page.`;
-
-  const userPrompt = `Source URL: ${url}
-
-Page text (truncated):
-${pageText}`;
+- Empty string or empty array if a field isn't on the page.
+- business_hours: include all 7 days. is_open=false for closed.
+- services: prefer the clinic's own naming. Include description and price if visible.
+- staff: include credentials (e.g. "GDC 12345", "BDS") if visible.
+- agent_tone: one short sentence.
+- clinic_guidelines: cancellation/payment/urgent care policies; empty if absent.`;
 
   const body = {
     model: ANTHROPIC_MODEL,
     max_tokens: 4000,
     system: systemPrompt,
-    messages: [{ role: "user", content: userPrompt }],
-    /* Use a forced tool-call to constrain the output shape — Anthropic's
-       supported way of getting strict JSON without a free-text JSON parse. */
+    messages: [{ role: "user", content: `Source URL: ${url}\n\nPage text:\n${pageText}` }],
     tools: [{
       name: "save_clinic",
-      description: "Save the structured clinic information extracted from the website.",
+      description: "Save the structured clinic information.",
       input_schema: {
         type: "object",
         properties: {
-          name: { type: "string" },
-          phone: { type: "string" },
-          email: { type: "string" },
-          address: { type: "string" },
-          description: { type: "string" },
+          name: { type: "string" }, phone: { type: "string" }, email: { type: "string" },
+          address: { type: "string" }, description: { type: "string" },
           services: {
             type: "array",
             items: {
               type: "object",
-              properties: {
-                name: { type: "string" },
-                description: { type: "string" },
-                price: { type: "string" },
-              },
+              properties: { name: { type: "string" }, description: { type: "string" }, price: { type: "string" } },
               required: ["name"],
             },
           },
@@ -263,10 +345,8 @@ ${pageText}`;
             items: {
               type: "object",
               properties: {
-                day: { type: "string" },
-                is_open: { type: "boolean" },
-                open_time: { type: "string" },
-                close_time: { type: "string" },
+                day: { type: "string" }, is_open: { type: "boolean" },
+                open_time: { type: "string" }, close_time: { type: "string" },
               },
               required: ["day", "is_open"],
             },
@@ -276,11 +356,8 @@ ${pageText}`;
             items: {
               type: "object",
               properties: {
-                name: { type: "string" },
-                title: { type: "string" },
-                credentials: { type: "string" },
-                specialty: { type: "string" },
-                bio: { type: "string" },
+                name: { type: "string" }, title: { type: "string" },
+                credentials: { type: "string" }, specialty: { type: "string" }, bio: { type: "string" },
               },
               required: ["name"],
             },
@@ -318,22 +395,16 @@ ${pageText}`;
     },
     body: JSON.stringify(body),
   });
-
   if (!res.ok) {
-    const err = await res.text();
-    throw new Error(`Anthropic ${res.status}: ${err.slice(0, 300)}`);
+    throw new Error(`Anthropic ${res.status}: ${(await res.text()).slice(0, 300)}`);
   }
-
   const data = await res.json() as {
     content?: Array<{ type: string; name?: string; input?: ExtractedClinic }>;
   };
   const toolBlock = (data.content || []).find(
     (b) => b.type === "tool_use" && b.name === "save_clinic",
   );
-  if (!toolBlock?.input) {
-    throw new Error("Anthropic response did not contain save_clinic tool call");
-  }
-
+  if (!toolBlock?.input) throw new Error("Anthropic response missing save_clinic tool call");
   return { ...EMPTY, ...toolBlock.input };
 }
 
