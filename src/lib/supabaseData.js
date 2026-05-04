@@ -113,6 +113,7 @@ const PRACTICE_COLUMNS = new Set([
   'elevenlabs_agent_id', 'twilio_phone_number', 'stripe_subscription_id',
   'onboarding_completed', 'pear_dental', 'finance_document_url',
   'email_verified', 'email_verification_code', 'email_verification_sent_at',
+  'industry', 'locations', 'clinic_guidelines', 'agent_tone',
 ]);
 
 function filterPracticeFields(obj) {

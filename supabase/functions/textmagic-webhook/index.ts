@@ -34,6 +34,7 @@ import { sendSms } from "../_shared/sms.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const PATHIR_TRIAL_SMS_NUMBER = Deno.env.get("PATHIR_TRIAL_SMS_NUMBER") || "+447418341716";
 
 /**
  * Parse TextMagic's webhook payload. TextMagic is configured to use
@@ -107,8 +108,52 @@ Deno.serve(async (req) => {
 
     const db = createClient(SUPABASE_URL, SUPABASE_SERVICE_ROLE_KEY);
 
-    // Find the practice that owns the receiving TextMagic number.
-    const practice = await loadPractice(db, { textmagicNumber: to });
+    /* Trial-route lookup: when a brand-new clinic is testing during
+       onboarding, the inbound is on the platform's shared TextMagic number
+       and we route by the sender's mobile (registered by intro-test-sms).
+       This is checked BEFORE recipient-based lookup so the platform number
+       can be shared across many trial signups without colliding with any
+       practice that already owns it. */
+    // deno-lint-ignore no-explicit-any
+    let practice: any = null;
+    if (normalizePhone(PATHIR_TRIAL_SMS_NUMBER) === to) {
+      const { data: route } = await db
+        .from("sms_trial_routes")
+        .select("practice_id")
+        .eq("user_phone", from)
+        .gt("expires_at", new Date().toISOString())
+        .maybeSingle();
+      if (route?.practice_id) {
+        const routed = await loadPractice(db, { practiceId: route.practice_id });
+        if (routed) {
+          /* Inject the trial-mode SMS config so the AI's reply also goes
+             through the shared platform number. We do not persist this
+             onto the practice row — when they connect their own provider
+             from Settings, the normal sms.ts resolver picks it up. */
+          practice = {
+            ...routed,
+            integrations: {
+              ...(routed.integrations || {}),
+              sms_provider: "textmagic",
+              textmagic: {
+                ...(routed.integrations?.textmagic || {}),
+                enabled: true,
+                phone_number: PATHIR_TRIAL_SMS_NUMBER,
+                sender_id: PATHIR_TRIAL_SMS_NUMBER,
+                ai_reply_enabled: true,
+              },
+            },
+          };
+          console.log(`[TEXTMAGIC WEBHOOK] Trial route matched: ${from} -> ${routed.name}`);
+        }
+      }
+    }
+
+    // Recipient-based lookup for production traffic.
+    if (!practice) {
+      practice = await loadPractice(db, { textmagicNumber: to });
+    }
+
     if (!practice) {
       console.warn(`[TEXTMAGIC WEBHOOK] No practice for number ${to}`);
       return new Response("OK", { status: 200 });

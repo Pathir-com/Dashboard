@@ -29,5 +29,8 @@ dist-ssr
 *.sw?
 
 .env
+.env.test
+.env.test.local
 supabase/.temp/.base44-import/
 supabase/.temp/
+tests/e2e/.run-state/

@@ -4,9 +4,8 @@ import { Navigate } from 'react-router-dom';
 
 export default function Login() {
   const { user, signIn, signUp, isLoadingAuth } = useAuth();
-  // TEMPORARY: signups disabled — remove this line and restore 'login' default to re-enable
   const [mode, setMode] = useState('login');
-  const signupsDisabled = true;
+  const signupsDisabled = false;
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [fullName, setFullName] = useState('');
