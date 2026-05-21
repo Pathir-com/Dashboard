@@ -28,6 +28,7 @@ import { buildAgentConfigForPractice } from "../_shared/industry.ts";
 import { buildToolDefinitions } from "../_shared/agent-config.ts";
 import { ensureBookableCatalog } from "../_shared/catalog.ts";
 import { ensureAgentForPractice } from "../_shared/provision.ts";
+import { ensurePhoneRegisteredToAgent } from "../_shared/phone-registration.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -172,6 +173,21 @@ Deno.serve(async (req) => {
         }
       } else {
         entry.twilio = "skipped (no number or no Twilio creds)";
+      }
+
+      /* 4. ElevenLabs phone-number → agent registration. The number may be
+         registered to a recycled/old agent (Berkeley's were on "Antrim
+         House") or none — converge it to THIS practice's agent so inbound
+         calls actually reach the right agent. */
+      if (p.twilio_phone_number && p.elevenlabs_agent_id && ELEVENLABS_API_KEY) {
+        entry.el_phone_registration = await ensurePhoneRegisteredToAgent({
+          elevenLabsApiKey: ELEVENLABS_API_KEY,
+          phoneNumber: p.twilio_phone_number,
+          agentId: p.elevenlabs_agent_id,
+          label: `Pathir - ${(p.name || "").trim()}`,
+          twilioSid: TWILIO_SID,
+          twilioToken: TWILIO_TOKEN,
+        });
       }
     } catch (e) {
       entry.error = (e as Error).message;

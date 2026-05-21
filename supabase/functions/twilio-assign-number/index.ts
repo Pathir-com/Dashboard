@@ -1,6 +1,7 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { ensureAgentForPractice } from "../_shared/provision.ts";
+import { ensurePhoneRegisteredToAgent } from "../_shared/phone-registration.ts";
 
 const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID")!;
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN")!;
@@ -300,24 +301,23 @@ Deno.serve(async (req) => {
       }
     }
 
-    // ── Register phone number with ElevenLabs agent ──
+    // ── Register phone number with ElevenLabs agent (create or reassign) ──
+    // Recycled numbers may already be registered to a previous client's
+    // agent, so we converge the registration to THIS practice's agent
+    // rather than only creating when absent.
     let elevenlabsRegistered = false;
     if (agentId && ELEVENLABS_API_KEY) {
       try {
-        const elRes = await fetch("https://api.elevenlabs.io/v1/convai/phone-numbers/create", {
-          method: "POST",
-          headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            phone_number: phoneNumber,
-            provider: "twilio",
-            label: `Pathir - ${practice.name}`,
-            agent_id: agentId,
-            twilio_config: { account_sid: TWILIO_SID, auth_token: TWILIO_TOKEN },
-          }),
+        const reg = await ensurePhoneRegisteredToAgent({
+          elevenLabsApiKey: ELEVENLABS_API_KEY,
+          phoneNumber,
+          agentId,
+          label: `Pathir - ${practice.name}`,
+          twilioSid: TWILIO_SID,
+          twilioToken: TWILIO_TOKEN,
         });
-        elevenlabsRegistered = elRes.ok;
-        if (!elRes.ok) console.error("[ASSIGN] ElevenLabs phone registration failed:", await elRes.text());
-        else console.log("[ASSIGN] Phone registered with ElevenLabs agent:", agentId);
+        elevenlabsRegistered = reg.ok;
+        console.log(`[ASSIGN] ElevenLabs phone registration: ${reg.action} ok=${reg.ok} ${reg.detail || ""}`);
       } catch (elErr) {
         console.error("[ASSIGN] ElevenLabs registration error (non-fatal):", elErr);
       }
