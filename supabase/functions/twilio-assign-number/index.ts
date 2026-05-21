@@ -1,5 +1,6 @@
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
+import { ensureAgentForPractice } from "../_shared/provision.ts";
 
 const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID")!;
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN")!;
@@ -283,9 +284,25 @@ Deno.serve(async (req) => {
       console.error("[ASSIGN] SMS provisioning failed (non-fatal):", smsErr);
     }
 
+    /* Ensure an agent exists BEFORE registering the number. Enabling the
+       phone channel must never produce a dead number — if the practice has
+       no agent (older practices whose fire-and-forget provisioning silently
+       failed, e.g. Baker Street), provision one now so the inbound call is
+       actually answered. */
+    let agentId = practice.elevenlabs_agent_id;
+    if (!agentId && ELEVENLABS_API_KEY) {
+      try {
+        const ensured = await ensureAgentForPractice(adminClient, practice);
+        agentId = ensured.agent_id;
+        console.log(`[ASSIGN] Provisioned missing agent ${agentId} for ${practice.name}`);
+      } catch (e) {
+        console.error("[ASSIGN] Could not auto-provision agent:", (e as Error).message);
+      }
+    }
+
     // ── Register phone number with ElevenLabs agent ──
     let elevenlabsRegistered = false;
-    if (practice.elevenlabs_agent_id && ELEVENLABS_API_KEY) {
+    if (agentId && ELEVENLABS_API_KEY) {
       try {
         const elRes = await fetch("https://api.elevenlabs.io/v1/convai/phone-numbers/create", {
           method: "POST",
@@ -294,18 +311,18 @@ Deno.serve(async (req) => {
             phone_number: phoneNumber,
             provider: "twilio",
             label: `Pathir - ${practice.name}`,
-            agent_id: practice.elevenlabs_agent_id,
+            agent_id: agentId,
             twilio_config: { account_sid: TWILIO_SID, auth_token: TWILIO_TOKEN },
           }),
         });
         elevenlabsRegistered = elRes.ok;
         if (!elRes.ok) console.error("[ASSIGN] ElevenLabs phone registration failed:", await elRes.text());
-        else console.log("[ASSIGN] Phone registered with ElevenLabs agent:", practice.elevenlabs_agent_id);
+        else console.log("[ASSIGN] Phone registered with ElevenLabs agent:", agentId);
       } catch (elErr) {
         console.error("[ASSIGN] ElevenLabs registration error (non-fatal):", elErr);
       }
-    } else if (!practice.elevenlabs_agent_id) {
-      console.warn("[ASSIGN] No elevenlabs_agent_id — phone registered in Twilio only. Provision agent first.");
+    } else if (!agentId) {
+      console.warn("[ASSIGN] No agent available — phone registered in Twilio only.");
     }
 
     return new Response(

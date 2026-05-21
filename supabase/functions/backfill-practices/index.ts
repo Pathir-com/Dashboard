@@ -27,6 +27,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildAgentConfigForPractice } from "../_shared/industry.ts";
 import { buildToolDefinitions } from "../_shared/agent-config.ts";
 import { ensureBookableCatalog } from "../_shared/catalog.ts";
+import { ensureAgentForPractice } from "../_shared/provision.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SERVICE_ROLE = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -82,6 +83,20 @@ Deno.serve(async (req) => {
     try {
       // 1. Catalog
       entry.catalog = await ensureBookableCatalog(db, p);
+
+      /* 1b. Missing agent — provision one. Older practices that finished
+         onboarding in the fire-and-forget era (e.g. Baker Street) have
+         elevenlabs_agent_id = "" and never got an agent. Create one so the
+         practice can actually take calls/chats. */
+      if ((!p.elevenlabs_agent_id || p.elevenlabs_agent_id === "") && ELEVENLABS_API_KEY) {
+        try {
+          const ensured = await ensureAgentForPractice(db, p);
+          p.elevenlabs_agent_id = ensured.agent_id; // so steps below use it
+          entry.agent_provisioned = { agent_id: ensured.agent_id, created: ensured.created };
+        } catch (e) {
+          entry.agent_provision_error = (e as Error).message;
+        }
+      }
 
       // 2. Voice prompt — PATCH the existing agent (keep agent_id).
       if (p.elevenlabs_agent_id && ELEVENLABS_API_KEY) {

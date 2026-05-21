@@ -28,15 +28,11 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { buildToolDefinitions } from "../_shared/agent-config.ts";
-import { buildAgentConfigForPractice } from "../_shared/industry.ts";
-import { ensureBookableCatalog } from "../_shared/catalog.ts";
+import { ensureAgentForPractice } from "../_shared/provision.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const SUPABASE_ANON_KEY = Deno.env.get("SUPABASE_ANON_KEY")!;
-const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY")!;
-const FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`;
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") return new Response("ok", { headers: corsHeaders });
@@ -92,125 +88,21 @@ Deno.serve(async (req) => {
       }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
     }
 
-    // Load practitioners + services so the system prompt knows the team
-    // and catalog. The agent will reference these by name during calls.
-    let { data: practitioners } = await db
-      .from("practitioners")
-      .select("name, title, credentials, services, bio")
-      .eq("practice_id", practiceId)
-      .order("sort_order", { ascending: true });
+    /* Single source of truth for agent creation (shared with
+       twilio-assign-number and backfill-practices): seeds a bookable
+       catalog, builds the current vertical prompt, creates the agent with
+       the chosen voice, stores the id. */
+    const ensured = await ensureAgentForPractice(db, practice, { force });
 
-    let { data: services } = await db
-      .from("services")
-      .select("name, category, price_pence, duration_minutes, description")
-      .eq("practice_id", practiceId)
-      .order("name", { ascending: true });
-
-    /* Minimum bookable catalog. A practice created without scraping (or
-       before the owner fills in Settings) has empty services/practitioners
-       tables — search_availability returns no slots and the agent "picks
-       up but won't book". ensureBookableCatalog seeds the vertical defaults
-       (idempotent), shared with backfill-practices. */
-    const seeded = await ensureBookableCatalog(db, practice);
-    if (seeded.seeded_services > 0 || seeded.seeded_practitioner) {
-      console.log(`[PROVISION] Seeded catalog for ${practice.name}:`, seeded);
-      const [svc, prac] = await Promise.all([
-        db.from("services")
-          .select("name, category, price_pence, duration_minutes, description")
-          .eq("practice_id", practiceId).order("name", { ascending: true }),
-        db.from("practitioners")
-          .select("name, title, credentials, services, bio")
-          .eq("practice_id", practiceId).order("sort_order", { ascending: true }),
-      ]);
-      services = svc.data;
-      practitioners = prac.data;
-    }
-
-    const { template, systemPrompt, firstMessage } = await buildAgentConfigForPractice(
-      db,
-      practice,
-      practitioners || [],
-      services || [],
-    );
-
-    const tools = buildToolDefinitions(FUNCTIONS_URL);
-
-    const agentPayload = {
-      name: `${template.agent_persona_name} — ${practice.name}`,
-      conversation_config: {
-        agent: {
-          prompt: { prompt: systemPrompt, llm: "gpt-4o", tools },
-          first_message: firstMessage,
-          language: "en",
-        },
-        tts: {
-          voice_id: "TVmbglAk3F1GkiCoOq47",
-          model_id: "eleven_turbo_v2",
-          optimize_streaming_latency: 3,
-          stability: 0.5,
-          speed: 1,
-          similarity_boost: 0.75,
-        },
-        turn: { turn_timeout: 15, turn_eagerness: "normal" },
-        conversation: { max_duration_seconds: 600 },
-      },
-      // Allow conversation-time overrides so the per-inbound text-channel
-      // path (_shared/ai-reply.ts) can refresh the prompt with live DB
-      // data (services, prices, practitioners) AND clear voice-only tools
-      // for SMS/chat/Meta. System-wide — every new clinic gets this for
-      // free, regardless of vertical.
-      platform_settings: {
-        overrides: {
-          conversation_config_override: {
-            agent: {
-              prompt: { prompt: true, tool_ids: true, tools: true },
-              first_message: true,
-              language: true,
-            },
-            tts: { voice_id: false },
-          },
-          custom_llm_extra_body: false,
-          enable_conversation_initiation_client_data_from_webhook: false,
-        },
-      },
-    };
-
-    console.log(`[PROVISION] Creating ${template.agent_persona_name} agent for ${practice.name} (industry=${practice.industry})...`);
-
-    const elRes = await fetch("https://api.elevenlabs.io/v1/convai/agents/create", {
-      method: "POST",
-      headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
-      body: JSON.stringify(agentPayload),
-    });
-
-    if (!elRes.ok) {
-      const errBody = await elRes.text();
-      console.error(`[PROVISION] ElevenLabs agent creation failed: ${elRes.status} ${errBody}`);
-      return new Response(JSON.stringify({ error: "Failed to create AI agent", details: errBody }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    const agentData = await elRes.json();
-    const agentId = agentData.agent_id;
-    if (!agentId) {
-      console.error("[PROVISION] No agent_id in response:", agentData);
-      return new Response(JSON.stringify({ error: "Agent created but no ID returned" }), {
-        status: 500, headers: { ...corsHeaders, "Content-Type": "application/json" },
-      });
-    }
-
-    await db.from("practices").update({ elevenlabs_agent_id: agentId }).eq("id", practiceId);
-
-    console.log(`[PROVISION] Agent ${agentId} created for ${practice.name}`);
+    console.log(`[PROVISION] Agent ${ensured.agent_id} ready for ${practice.name}`);
 
     return new Response(JSON.stringify({
       success: true,
-      agent_id: agentId,
-      agent_name: template.agent_persona_name,
-      industry: template.id,
+      agent_id: ensured.agent_id,
+      agent_name: ensured.persona,
+      industry: ensured.industry,
       practice_name: practice.name,
-      message: `${template.agent_persona_name} agent provisioned for ${practice.name}`,
+      message: `${ensured.persona} agent provisioned for ${practice.name}`,
     }), { headers: { ...corsHeaders, "Content-Type": "application/json" } });
   } catch (err) {
     console.error("[PROVISION ERROR]", err);
