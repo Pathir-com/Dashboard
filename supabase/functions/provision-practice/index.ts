@@ -30,6 +30,7 @@ import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
 import { buildToolDefinitions } from "../_shared/agent-config.ts";
 import { buildAgentConfigForPractice } from "../_shared/industry.ts";
+import { ensureBookableCatalog } from "../_shared/catalog.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -107,58 +108,22 @@ Deno.serve(async (req) => {
 
     /* Minimum bookable catalog. A practice created without scraping (or
        before the owner fills in Settings) has empty services/practitioners
-       tables — which means search_availability returns no slots and the
-       agent "picks up but won't book". We seed the vertical's default
-       services + one default practitioner so EVERY new practice is bookable
-       the moment its agent goes live. The owner overwrites these in
-       Settings (which re-syncs). Idempotent: only seeds when empty. */
-    if (!services || services.length === 0) {
-      const { data: tpl } = await db
-        .from("industry_templates")
-        .select("default_services, practitioner_titles, practitioner_role_labels")
-        .eq("id", practice.industry || "dental")
-        .single();
-      const defaults = (tpl?.default_services as Array<Record<string, unknown>>) || [];
-      if (defaults.length > 0) {
-        await db.from("services").insert(
-          defaults.map((s) => ({
-            practice_id: practiceId,
-            name: s.name,
-            category: s.category || "general",
-            price_pence: s.price_pence ?? null,
-            duration_minutes: s.duration_minutes ?? 30,
-            buffer_minutes: 5,
-            description: s.description || "",
-          })),
-        );
-        const reload = await db
-          .from("services")
+       tables — search_availability returns no slots and the agent "picks
+       up but won't book". ensureBookableCatalog seeds the vertical defaults
+       (idempotent), shared with backfill-practices. */
+    const seeded = await ensureBookableCatalog(db, practice);
+    if (seeded.seeded_services > 0 || seeded.seeded_practitioner) {
+      console.log(`[PROVISION] Seeded catalog for ${practice.name}:`, seeded);
+      const [svc, prac] = await Promise.all([
+        db.from("services")
           .select("name, category, price_pence, duration_minutes, description")
-          .eq("practice_id", practiceId)
-          .order("name", { ascending: true });
-        services = reload.data;
-        console.log(`[PROVISION] Seeded ${defaults.length} default services for ${practice.name}`);
-      }
-
-      if (!practitioners || practitioners.length === 0) {
-        // One default practitioner so search_availability's seniority
-        // fallback always has someone to book with. Title from the template.
-        const titles = (tpl?.practitioner_titles as string[]) || ["Dr"];
-        const roleLabels = (tpl?.practitioner_role_labels as string[]) || ["Clinician"];
-        await db.from("practitioners").insert({
-          practice_id: practiceId,
-          name: `Lead ${roleLabels[0] || "Clinician"}`,
-          title: titles[0] || "",
-          sort_order: 1,
-        });
-        const reloadP = await db
-          .from("practitioners")
+          .eq("practice_id", practiceId).order("name", { ascending: true }),
+        db.from("practitioners")
           .select("name, title, credentials, services, bio")
-          .eq("practice_id", practiceId)
-          .order("sort_order", { ascending: true });
-        practitioners = reloadP.data;
-        console.log(`[PROVISION] Seeded default practitioner for ${practice.name}`);
-      }
+          .eq("practice_id", practiceId).order("sort_order", { ascending: true }),
+      ]);
+      services = svc.data;
+      practitioners = prac.data;
     }
 
     const { template, systemPrompt, firstMessage } = await buildAgentConfigForPractice(

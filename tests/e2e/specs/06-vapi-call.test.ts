@@ -76,7 +76,7 @@ describe(`VAPI integration [${runId()}]`, () => {
     expect(e164s.some((n) => n.startsWith("+44"))).toBe(true);
   });
 
-  it("Twilio voice URL on assigned number points at VAPI inbound", async () => {
+  it("Twilio voice URL on assigned number points at ElevenLabs (not VAPI)", async () => {
     if (!assignedNumber) return;
     const env = await loadEnv();
     const auth = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64");
@@ -86,7 +86,12 @@ describe(`VAPI integration [${runId()}]`, () => {
     );
     const data = await res.json() as { incoming_phone_numbers: any[] };
     const match = data.incoming_phone_numbers[0];
-    expect(match?.voice_url).toBe("https://api.vapi.ai/twilio/inbound_call");
+    /* Calls must route to ElevenLabs (where the agent + tools live), never
+       the dead VAPI endpoint. This file is named for VAPI because VAPI is
+       still the test *harness* for placing outbound calls — but inbound
+       routing for our practices is ElevenLabs. */
+    expect(match?.voice_url).toContain("elevenlabs.io/twilio/inbound_call");
+    expect(match?.voice_url).not.toContain("vapi.ai");
   });
 
   it("(live-call) places real call via VAPI and verifies first turn", async () => {
