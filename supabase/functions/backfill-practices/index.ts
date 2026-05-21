@@ -24,7 +24,6 @@
  */
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { buildToolDefinitions } from "../_shared/agent-config.ts";
 import { buildAgentConfigForPractice } from "../_shared/industry.ts";
 import { ensureBookableCatalog } from "../_shared/catalog.ts";
 
@@ -34,7 +33,6 @@ const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY") || "";
 const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID") || "";
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN") || "";
 const ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/twilio/inbound_call";
-const FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`;
 
 Deno.serve(async (req) => {
   // Service-role only (gateway has verify_jwt=true; we additionally require
@@ -86,16 +84,20 @@ Deno.serve(async (req) => {
         const { systemPrompt, firstMessage } = await buildAgentConfigForPractice(
           db, p, practitioners || [], services || [],
         );
-        const tools = buildToolDefinitions(FUNCTIONS_URL);
+        /* PATCH only the prompt TEXT + first_message. We deliberately do
+           NOT send `tools` here: existing agents reference their tools as
+           separate tool DOCUMENTS (tool_ids), and sending inline `tools`
+           makes ElevenLabs 404 on the referenced docs (Spark hit this).
+           Migration 024 changes prompt wording only, so the tool wiring is
+           left exactly as provisioned. */
         const r = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${p.elevenlabs_agent_id}`, {
           method: "PATCH",
           headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
           body: JSON.stringify({
             conversation_config: {
               agent: {
-                prompt: { prompt: systemPrompt, llm: "gpt-4o", tools },
+                prompt: { prompt: systemPrompt },
                 first_message: firstMessage,
-                language: "en",
               },
             },
           }),
