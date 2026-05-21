@@ -35,11 +35,11 @@ const ANTHROPIC_MODEL = Deno.env.get("ANTHROPIC_MODEL") || "claude-haiku-4-5";
 const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY") || "";
 const SCRAPER_AGENT_ID = Deno.env.get("SCRAPER_AGENT_ID") || "";
 
-const FETCH_TIMEOUT_MS = 10_000;
-const MAX_HTML_CHARS = 80_000; // total budget across all pages we send to LLM
-const WS_TIMEOUT_MS = 60_000;
-const MAX_FOLLOW_PAGES = 6;    // hard cap on linked pages we fetch
-const PER_PAGE_TIMEOUT_MS = 8_000;
+const FETCH_TIMEOUT_MS = 8_000;
+const MAX_HTML_CHARS = 70_000; // total budget across all pages we send to LLM
+const WS_TIMEOUT_MS = 35_000;  // fail fast — the frontend caps at 45s
+const MAX_FOLLOW_PAGES = 4;    // hard cap on linked pages we fetch
+const PER_PAGE_TIMEOUT_MS = 6_000;
 
 /* Path-keyword scoring for internal-link discovery. Higher score = more
    likely to contain practitioner / service / FAQ content the LLM can use.

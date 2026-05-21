@@ -83,7 +83,10 @@ const DashboardRedirect = () => {
     console.error('Failed to load practice:', error);
   }
 
-  if (!practice) {
+  // No practice, or a practice whose onboarding was never finished → send
+  // them to onboarding (which resumes at the final step for an existing
+  // half-created practice rather than forcing a duplicate).
+  if (!practice || !practice.onboarding_completed) {
     return <Navigate to="/onboarding" replace />;
   }
 

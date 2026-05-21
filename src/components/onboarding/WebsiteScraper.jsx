@@ -36,7 +36,12 @@ export default function WebsiteScraper({
   const [error, setError] = useState(null);
 
   const run = async () => {
-    if (!url.trim() || !practiceId) return;
+    /* practiceId is OPTIONAL — during onboarding the practice row doesn't
+       exist yet and the backend accepts practiceId=null (JWT still
+       required). Only the URL is mandatory. The previous `!practiceId`
+       guard silently no-op'd the button in onboarding, which read as a
+       frozen signup. */
+    if (!url.trim()) return;
     setLoading(true);
     setError(null);
     setResult(null);
@@ -45,15 +50,24 @@ export default function WebsiteScraper({
 
     /* The progress bar is cosmetic — the real work is one round-trip. We
        step it forward at predictable points so the user has feedback that
-       the request is alive. The function itself takes 5–15s. */
+       the request is alive. */
     const tick = setInterval(() => {
       setProgress((p) => (p < 80 ? p + 5 : p));
-    }, 600);
+    }, 700);
+
+    /* Hard client-side timeout. The scraper crawls a few pages + an LLM
+       call; if model hosting is slow it can hang. We never let that block
+       the signup — abort at 45s and let the user fill in manually. */
+    const HARD_TIMEOUT_MS = 45_000;
+    const timeoutPromise = new Promise((_, reject) =>
+      setTimeout(() => reject(new Error('TIMEOUT')), HARD_TIMEOUT_MS),
+    );
 
     try {
-      const { data, error: fnErr } = await supabase.functions.invoke('scrape-website', {
-        body: { practiceId, url: url.trim(), industry },
+      const invokePromise = supabase.functions.invoke('scrape-website', {
+        body: { practiceId: practiceId || null, url: url.trim(), industry },
       });
+      const { data, error: fnErr } = await Promise.race([invokePromise, timeoutPromise]);
       if (fnErr) throw fnErr;
       if (!data?.ok) throw new Error(data?.error || 'Scrape failed');
 
@@ -64,7 +78,11 @@ export default function WebsiteScraper({
       setStep('Done');
       onExtracted?.(data.extracted, data.mode);
     } catch (e) {
-      setError(e.message || 'Could not scrape that URL.');
+      setError(
+        e.message === 'TIMEOUT'
+          ? "That's taking longer than expected — you can fill in the details manually and carry on. We'll keep your website on file."
+          : (e.message || 'Could not scrape that URL.'),
+      );
     } finally {
       clearInterval(tick);
       setLoading(false);

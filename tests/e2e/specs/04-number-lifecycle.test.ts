@@ -66,11 +66,16 @@ describe(`Twilio number lifecycle [${runId()}]`, () => {
     expect(data?.twilio_phone_number).toBe(assignedNumberE164);
   });
 
-  it("Twilio: number's voice_url points at VAPI inbound + friendly_name has practice", async () => {
+  it("Twilio: number's voice_url points at ElevenLabs (not VAPI) + friendly_name has practice", async () => {
     const all = await listIncomingNumbers();
     const match = all.find((n) => n.phone_number === assignedNumberE164);
     expect(match, `${assignedNumberE164} not found on Twilio`).toBeDefined();
-    expect(match!.voice_url).toContain("api.vapi.ai/twilio/inbound_call");
+    /* Regression guard for the 2026-03-27 mis-revert that pointed new
+       numbers at a dead, unfunded VAPI endpoint while the agent lived in
+       ElevenLabs. The voice_url MUST be ElevenLabs — where the agent and
+       its tools actually are — never VAPI. */
+    expect(match!.voice_url).toContain("elevenlabs.io/twilio/inbound_call");
+    expect(match!.voice_url).not.toContain("vapi.ai");
     expect(match!.friendly_name).toContain(practice.name);
     assignedNumberSid = match!.sid;
   });

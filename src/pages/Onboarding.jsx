@@ -67,8 +67,17 @@ export default function Onboarding() {
     getMyPractice()
       .then((existing) => {
         if (cancelled) return;
-        if (existing?.id) {
+        if (existing?.id && existing.onboarding_completed) {
+          // Fully onboarded → straight to the dashboard.
           navigate(`/Clinic?id=${existing.id}`, { replace: true });
+        } else if (existing?.id) {
+          /* Practice row exists but onboarding was never finished (user
+             dropped off after Step 3, or a reload). Resume at the final
+             step instead of trapping them in the dashboard or forcing a
+             duplicate practice. */
+          setCreatedPractice(existing);
+          setStep(4);
+          setCheckingExistingPractice(false);
         } else {
           setCheckingExistingPractice(false);
         }
@@ -138,9 +147,20 @@ export default function Onboarding() {
       });
       setCreatedPractice(practice);
 
-      supabase.functions
-        .invoke('provision-practice', { body: { practiceId: practice.id } })
-        .catch((err) => console.error('Agent provisioning failed (non-fatal):', err));
+      /* Await provisioning and check the returned {error} — supabase-js does
+         NOT throw on a non-2xx, so the previous fire-and-forget .catch()
+         silently swallowed failures, leaving users on the SMS-test step
+         with no agent. We now block on it so the agent (and its seeded
+         catalog) exists before the AI test, and surface any failure. */
+      const { data: prov, error: provErr } = await supabase.functions.invoke(
+        'provision-practice',
+        { body: { practiceId: practice.id } },
+      );
+      if (provErr || prov?.error) {
+        console.error('Agent provisioning failed:', provErr || prov?.error);
+        toast.error('Your clinic was created, but setting up the AI agent hit a snag. You can retry from Settings → Integrations.');
+        // Still advance — the practice exists; they can re-provision later.
+      }
 
       setStep(4);
     } catch (err) {

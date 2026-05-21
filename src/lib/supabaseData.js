@@ -102,6 +102,24 @@ export async function createPractice(practiceData) {
     .single();
 
   if (error) throw error;
+
+  /* CRITICAL: the dashboard reads the JSONB columns (price_list,
+     practitioners) but the booking tools, the voice agent prompt, and the
+     text-reply prompt all read the RELATIONAL tables (services,
+     practitioners, practitioner_services). For weeks new practices shipped
+     with empty relational tables because only updatePractice ran this sync
+     — so a fresh agent had no catalog and search_availability returned no
+     slots ("picks up but won't book"). We now run the same sync at create
+     time, AWAITED and ordered (services first, because practitioner→service
+     links resolve against the services table), so the practice is bookable
+     and the agent has its catalog before provision-practice runs. */
+  if (practiceData.price_list && practiceData.price_list.length > 0) {
+    await syncServicesFromPriceList(data.id, practiceData.price_list);
+  }
+  if (practiceData.practitioners && practiceData.practitioners.length > 0) {
+    await syncPractitionersFromJSONB(data.id, practiceData.practitioners);
+  }
+
   return data;
 }
 

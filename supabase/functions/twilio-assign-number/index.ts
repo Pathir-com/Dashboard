@@ -6,7 +6,14 @@ const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN")!;
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
 const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY") || "";
-const VAPI_WEBHOOK_URL = "https://api.vapi.ai/twilio/inbound_call";
+/* Inbound calls route to ElevenLabs ConvAI — the same platform where we
+   provision the agent and register the number below. The old VAPI URL was
+   left behind by a partial revert (b2315f4, 2026-03-27) of the
+   VAPI→ElevenLabs migration: numbers were still registered with ElevenLabs
+   but Twilio pointed at VAPI, which this codebase no longer backs with any
+   webhook — so new numbers dead-ended. Pointing both at ElevenLabs closes
+   that gap. Region-neutral host; ElevenLabs routes to the right region. */
+const ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/twilio/inbound_call";
 const SMS_WEBHOOK_URL = `${SUPABASE_URL}/functions/v1/twilio-sms-webhook`;
 
 const twilioAuth = btoa(`${TWILIO_SID}:${TWILIO_TOKEN}`);
@@ -186,7 +193,7 @@ Deno.serve(async (req) => {
     if (pooled) {
       phoneNumber = pooled.phone_number;
       await twilioPost(`/IncomingPhoneNumbers/${pooled.sid}.json`, {
-        VoiceUrl: VAPI_WEBHOOK_URL,
+        VoiceUrl: ELEVENLABS_VOICE_URL,
         VoiceMethod: "POST",
         FriendlyName: `Pathir - ${practice.name}`,
       });
@@ -223,7 +230,7 @@ Deno.serve(async (req) => {
 
       const purchased = await twilioPost("/IncomingPhoneNumbers.json", {
         PhoneNumber: available[0].phone_number,
-        VoiceUrl: VAPI_WEBHOOK_URL,
+        VoiceUrl: ELEVENLABS_VOICE_URL,
         VoiceMethod: "POST",
         FriendlyName: `Pathir - ${practice.name}`,
       });
