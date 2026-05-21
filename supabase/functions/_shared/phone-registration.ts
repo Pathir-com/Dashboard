@@ -71,7 +71,9 @@ export async function ensurePhoneRegisteredToAgent(opts: {
     };
   }
 
-  // Not registered yet — create it.
+  // Not registered yet — create it. ElevenLabs' current import-Twilio API
+  // takes top-level `sid` + `token` (Twilio account SID + auth token); the
+  // older nested `twilio_config` shape now 422s with "sid Field required".
   const r = await fetch(`${EL}/create`, {
     method: "POST",
     headers: h,
@@ -80,7 +82,8 @@ export async function ensurePhoneRegisteredToAgent(opts: {
       provider: "twilio",
       label,
       agent_id: agentId,
-      twilio_config: { account_sid: twilioSid, auth_token: twilioToken },
+      sid: twilioSid,
+      token: twilioToken,
     }),
   });
   return {
