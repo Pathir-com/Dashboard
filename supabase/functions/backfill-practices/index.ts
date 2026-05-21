@@ -25,6 +25,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildAgentConfigForPractice } from "../_shared/industry.ts";
+import { buildToolDefinitions } from "../_shared/agent-config.ts";
 import { ensureBookableCatalog } from "../_shared/catalog.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
@@ -33,6 +34,15 @@ const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY") || "";
 const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID") || "";
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN") || "";
 const ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/twilio/inbound_call";
+const FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`;
+
+async function patchAgentPrompt(agentId: string, body: Record<string, unknown>) {
+  return fetch(`https://api.elevenlabs.io/v1/convai/agents/${agentId}`, {
+    method: "PATCH",
+    headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
+    body: JSON.stringify(body),
+  });
+}
 
 Deno.serve(async (req) => {
   // Service-role only (gateway has verify_jwt=true; we additionally require
@@ -84,26 +94,38 @@ Deno.serve(async (req) => {
         const { systemPrompt, firstMessage } = await buildAgentConfigForPractice(
           db, p, practitioners || [], services || [],
         );
-        /* PATCH only the prompt TEXT + first_message. We deliberately do
-           NOT send `tools` here: existing agents reference their tools as
-           separate tool DOCUMENTS (tool_ids), and sending inline `tools`
-           makes ElevenLabs 404 on the referenced docs (Spark hit this).
-           Migration 024 changes prompt wording only, so the tool wiring is
-           left exactly as provisioned. */
-        const r = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${p.elevenlabs_agent_id}`, {
-          method: "PATCH",
-          headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
-          body: JSON.stringify({
-            conversation_config: {
-              agent: {
-                prompt: { prompt: systemPrompt },
-                first_message: firstMessage,
-              },
-            },
-          }),
+        /* First try: PATCH prompt TEXT + first_message only. Healthy agents
+           keep their existing tool documents untouched (migration 024 only
+           changes wording). */
+        let r = await patchAgentPrompt(p.elevenlabs_agent_id, {
+          conversation_config: {
+            agent: { prompt: { prompt: systemPrompt }, first_message: firstMessage },
+          },
         });
+
+        /* Self-heal: some agents have dangling tool_ids (tool documents that
+           were deleted), so ANY PATCH 404s on document_not_found — that's
+           Spark. Retry clearing the broken tool_ids and installing fresh
+           inline tool definitions, which repairs the agent's tooling and
+           updates the prompt in one go. */
+        if (!r.ok) {
+          const errText = await r.text();
+          if (/document_not_found|not_found/i.test(errText)) {
+            const tools = buildToolDefinitions(FUNCTIONS_URL);
+            r = await patchAgentPrompt(p.elevenlabs_agent_id, {
+              conversation_config: {
+                agent: {
+                  prompt: { prompt: systemPrompt, llm: "gpt-4o", tool_ids: [], tools },
+                  first_message: firstMessage,
+                  language: "en",
+                },
+              },
+            });
+            entry.agent_repaired_tools = r.ok;
+          }
+          if (!r.ok) entry.agent_patch_error = (await r.text()).slice(0, 200);
+        }
         entry.agent_patch = { agent_id: p.elevenlabs_agent_id, status: r.status, ok: r.ok };
-        if (!r.ok) entry.agent_patch_error = (await r.text()).slice(0, 200);
       } else {
         entry.agent_patch = "skipped (no agent or no EL key)";
       }
