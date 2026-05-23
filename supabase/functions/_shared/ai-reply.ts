@@ -235,7 +235,7 @@ async function buildFreshPrompt(opts: BuildPromptOptions): Promise<string> {
     `PATIENT CONTEXT — ${patientLine}`,
     historyBlock,
     "",
-    "When the patient asks about a service or price, answer with the exact figure from SERVICES above. When they ask which practitioner does what, name the specific person from PRACTITIONERS above. When they ask about availability or location, reference the OPENING HOURS and LOCATIONS above. Be concrete.",
+    "When the patient asks about a service (or which services you offer), ALWAYS state its exact price from SERVICES above in the same reply — don't make them ask twice. When they ask which practitioner does what, name the specific person from PRACTITIONERS above. When they ask about availability or location, reference the OPENING HOURS and LOCATIONS above. Be concrete.",
   ].filter(Boolean).join("\n");
 }
 
