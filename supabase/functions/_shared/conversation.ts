@@ -128,18 +128,40 @@ export async function insertMessages(
   }>,
 ): Promise<void> {
   if (rows.length === 0) return;
-  const payload = rows.map((r) => ({
-    enquiry_id: r.enquiryId,
-    role: r.role,
-    message: r.message,
-    channel: r.channel,
-    provider_message_id: r.providerMessageId ?? null,
-    ...(r.createdAt ? { created_at: r.createdAt } : {}),
-  }));
-  // Upsert on the partial unique index so re-delivery is safe.
-  await db
-    .from("enquiry_messages")
-    .upsert(payload, { onConflict: "enquiry_id,provider_message_id", ignoreDuplicates: true });
+
+  /* Idempotency by manual dedup + plain INSERT — NOT upsert. The unique
+     index is PARTIAL (WHERE provider_message_id IS NOT NULL), which
+     PostgREST's onConflict can't match, so the previous upsert silently
+     errored and wrote ZERO rows (phone-call transcripts never appeared in
+     the dashboard). We query the provider_message_ids already stored for
+     these enquiries, drop those, and insert the rest. */
+  const withPid = rows.filter((r) => r.providerMessageId);
+  const seen = new Set<string>();
+  if (withPid.length > 0) {
+    const enquiryIds = [...new Set(withPid.map((r) => r.enquiryId))];
+    const pids = withPid.map((r) => r.providerMessageId as string);
+    const { data: existing } = await db
+      .from("enquiry_messages")
+      .select("enquiry_id, provider_message_id")
+      .in("enquiry_id", enquiryIds)
+      .in("provider_message_id", pids);
+    for (const e of existing || []) seen.add(`${e.enquiry_id}:${e.provider_message_id}`);
+  }
+
+  const payload = rows
+    .filter((r) => !r.providerMessageId || !seen.has(`${r.enquiryId}:${r.providerMessageId}`))
+    .map((r) => ({
+      enquiry_id: r.enquiryId,
+      role: r.role,
+      message: r.message,
+      channel: r.channel,
+      provider_message_id: r.providerMessageId ?? null,
+      ...(r.createdAt ? { created_at: r.createdAt } : {}),
+    }));
+
+  if (payload.length === 0) return;
+  const { error } = await db.from("enquiry_messages").insert(payload);
+  if (error) console.error("[insertMessages] insert failed:", error.message);
 }
 
 async function insertMessage(
