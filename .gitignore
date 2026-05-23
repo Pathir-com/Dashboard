@@ -34,3 +34,7 @@ dist-ssr
 supabase/.temp/.base44-import/
 supabase/.temp/
 tests/e2e/.run-state/
+
+# Playwright
+test-results/
+playwright-report/
