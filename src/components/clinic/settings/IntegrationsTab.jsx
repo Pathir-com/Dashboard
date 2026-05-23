@@ -763,18 +763,19 @@ export default function IntegrationsTab({
     );
   }
 
-  /* Hide channels the practice isn't using yet — most clinics start with
-     phone + web chat and never touch Instagram. We surface only:
-       (a) channels the practice has connected (isConnected[key])
-       (b) channels they've actively toggled on (integrations[key])
-       (c) channels currently expanded for setup
-     The "Show all channels" affordance reveals the rest if they ever want
-     to connect a new one. */
+  /* Declutter the channel grid WITHOUT hiding the primary setup actions.
+     CORE channels (Phone, Web Chat, SMS) are ALWAYS shown — a brand-new
+     account must be able to find and enable the phone agent immediately
+     (hiding everything when nothing is connected buried the toggle and
+     broke new-account setup). Only the SECONDARY channels (Facebook,
+     Instagram, Email) are hidden until connected/toggled, behind "Show
+     more". */
+  const CORE_CHANNELS = ['phone_enabled', 'web_chat_enabled', 'sms_enabled'];
   const [showAllChannels, setShowAllChannels] = useState(false);
   const visibleChannels = showAllChannels
     ? CHANNELS
     : CHANNELS.filter(
-        (ch) => isConnected[ch.key] || integrations[ch.key] || expanded === ch.key,
+        (ch) => CORE_CHANNELS.includes(ch.key) || isConnected[ch.key] || integrations[ch.key] || expanded === ch.key,
       );
   const hiddenChannelCount = CHANNELS.length - visibleChannels.length;
 
