@@ -51,23 +51,35 @@ export async function ensurePhoneRegisteredToAgent(opts: {
   const list = await listRes.json();
   const rows = Array.isArray(list) ? list : (list.phone_numbers || []);
   // deno-lint-ignore no-explicit-any
-  const existing = rows.find((p: any) => p.phone_number === phoneNumber);
+  const matches = rows.filter((p: any) => p.phone_number === phoneNumber);
 
-  if (existing) {
-    const currentAgent = (existing.assigned_agent || {}).agent_id || null;
-    if (currentAgent === agentId) {
-      return { action: "already_correct", ok: true, phone_number_id: existing.phone_number_id };
+  if (matches.length > 0) {
+    /* De-duplicate: repeated provisioning can leave several ElevenLabs
+       phone-number records for the same E.164 (some assigned, some not),
+       which makes routing + the audit non-deterministic. Keep ONE — prefer
+       one already on the correct agent — point it at the right agent, and
+       delete the rest so exactly one canonical record remains. */
+    // deno-lint-ignore no-explicit-any
+    const keep = matches.find((p: any) => (p.assigned_agent || {}).agent_id === agentId) || matches[0];
+    const dupes = matches.filter((p: { phone_number_id: string }) => p.phone_number_id !== keep.phone_number_id);
+    for (const d of dupes) {
+      await fetch(`${EL}/${d.phone_number_id}`, { method: "DELETE", headers: { "xi-api-key": elevenLabsApiKey } }).catch(() => {});
     }
-    const r = await fetch(`${EL}/${existing.phone_number_id}`, {
+
+    const currentAgent = (keep.assigned_agent || {}).agent_id || null;
+    if (currentAgent === agentId && dupes.length === 0) {
+      return { action: "already_correct", ok: true, phone_number_id: keep.phone_number_id };
+    }
+    const r = await fetch(`${EL}/${keep.phone_number_id}`, {
       method: "PATCH",
       headers: h,
       body: JSON.stringify({ agent_id: agentId, label }),
     });
     return {
-      action: "reassigned",
+      action: dupes.length > 0 ? "deduped_and_reassigned" : "reassigned",
       ok: r.ok,
-      phone_number_id: existing.phone_number_id,
-      detail: r.ok ? `was ${currentAgent || "none"}` : (await r.text()).slice(0, 200),
+      phone_number_id: keep.phone_number_id,
+      detail: r.ok ? `was ${currentAgent || "none"}, removed ${dupes.length} dupe(s)` : (await r.text()).slice(0, 200),
     };
   }
 
