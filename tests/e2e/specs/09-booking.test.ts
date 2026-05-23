@@ -124,6 +124,29 @@ describe(`Booking end-to-end [${runId()}]`, () => {
       .eq("practice_id", practice.id);
     expect(count || 0).toBeGreaterThan(0);
   });
+
+  it("verify_identity adopts a stated name onto a generic 'New Patient' contact", async () => {
+    if (!catalogSeeded) { console.log("[09-booking] no catalog — skip"); expect(true).toBe(true); return; }
+    const sb = await admin();
+    // Create a generic phone-caller contact (as lookup_caller_phone does).
+    const { data: contact } = await sb.from("contacts").insert({
+      practice_id: practice.id, name: "New Patient", phone: "+447700900321", source: "phone",
+    }).select("id").single();
+
+    const { status, body } = await invokeTool("verify_identity", {
+      contact_id: contact!.id,
+      stated_name: "Jordan Blake",
+      stated_dob: "1988-07-10",
+    });
+    expect(status).toBe(200);
+    expect(body.verified).toBe(true);
+    expect(body.name_adopted).toBe(true);
+
+    // The generic placeholder is now the real name → recognised by name next time.
+    const { data: updated } = await sb.from("contacts").select("name, date_of_birth").eq("id", contact!.id).single();
+    expect(updated?.name).toBe("Jordan Blake");
+    expect(updated?.date_of_birth).toBe("1988-07-10");
+  });
 });
 
 afterAll(async () => {

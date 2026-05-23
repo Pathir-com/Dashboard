@@ -404,6 +404,22 @@ async function handleVerifyIdentity(db: DB, args: any) {
 
   const nameOnFile = (contact.name || "").toLowerCase().trim();
   const nameStated = (stated_name || "").toLowerCase().trim();
+
+  /* Phone callers are created with a generic placeholder name ("New
+     Patient") because caller ID gives us no name. The first time such a
+     caller states their name, ADOPT it onto the contact record instead of
+     mismatching against the placeholder. This is how the system learns the
+     caller's name — so on the next call they're recognised by name, not
+     just by number, and the dashboard shows a real name. */
+  const GENERIC_NAMES = new Set(["new patient", "unknown", "new caller", "unknown caller", ""]);
+  if (GENERIC_NAMES.has(nameOnFile) && nameStated) {
+    await db.from("contacts").update({ name: stated_name }).eq("id", contact_id);
+    if (!contact.date_of_birth && stated_dob) {
+      await db.from("contacts").update({ date_of_birth: stated_dob }).eq("id", contact_id);
+    }
+    return { success: true, verified: true, name_adopted: true, contact_address: contact.address, contact_postcode: contact.postcode, message: `Thanks ${stated_name}, I've got your details. Identity verified.` };
+  }
+
   let nameMatch = nameOnFile === nameStated || nameOnFile.includes(nameStated) || nameStated.includes(nameOnFile);
   if (!nameMatch) {
     const fileParts = nameOnFile.split(/[\s\-]+/).filter(Boolean);
