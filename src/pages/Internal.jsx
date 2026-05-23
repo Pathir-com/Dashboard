@@ -11,6 +11,7 @@ import { toast } from 'sonner';
 import { createPageUrl } from '@/utils';
 import { Link, useNavigate } from 'react-router-dom';
 import { useAuth } from '@/lib/AuthContext';
+import SpecialityAudit from '@/components/internal/SpecialityAudit';
 
 const ADMIN_PASSWORD = "E0+2HK'~3:r";
 const ADMIN_EMAIL = "admin2025@pathir.com";
@@ -21,6 +22,7 @@ const createSlug = (name) => {
 
 export default function Internal() {
   const [isAuthenticated, setIsAuthenticated] = useState(true);
+  const [view, setView] = useState('practices');
   const [passwordInput, setPasswordInput] = useState('');
   const [passwordError, setPasswordError] = useState('');
   const [showResetForm, setShowResetForm] = useState(false);
@@ -400,6 +402,24 @@ export default function Internal() {
           </div>
         </div>
 
+        {/* View switcher: practice list vs speciality audit */}
+        <div className="flex gap-1 mb-6 bg-slate-100 rounded-lg p-1 w-fit">
+          {[['practices', 'Practices'], ['audit', 'Audit by speciality']].map(([id, label]) => (
+            <button
+              key={id}
+              onClick={() => setView(id)}
+              className={`px-4 py-1.5 rounded-md text-sm font-medium transition-colors ${
+                view === id ? 'bg-white text-slate-900 shadow-sm' : 'text-slate-500 hover:text-slate-900'
+              }`}
+            >
+              {label}
+            </button>
+          ))}
+        </div>
+
+        {view === 'audit' && <SpecialityAudit />}
+
+        {view === 'practices' && (
         <div className="grid grid-cols-1 md:grid-cols-2 lg:grid-cols-3 gap-4">
           {practices.map((practice) => (
             <Card key={practice.id} style={{
@@ -494,8 +514,9 @@ export default function Internal() {
             </Card>
           ))}
         </div>
+        )}
 
-        {practices.length === 0 && (
+        {view === 'practices' && practices.length === 0 && (
           <div className="text-center py-16 text-slate-400">
             <Building2 className="w-12 h-12 mx-auto mb-4 stroke-1" />
             <p>No practices yet. Add your first practice to get started.</p>

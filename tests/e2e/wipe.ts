@@ -16,7 +16,7 @@
  */
 
 import { admin } from "./helpers/supabase.ts";
-import { listTestAgents, deleteAgent } from "./helpers/elevenlabs.ts";
+import { listAgents, listTestAgents, deleteAgent } from "./helpers/elevenlabs.ts";
 import { listIncomingNumbers } from "./helpers/twilio.ts";
 import { tagPrefix } from "./helpers/run-id.ts";
 import { loadEnv } from "./helpers/env.ts";
@@ -108,6 +108,71 @@ async function wipeTwilioFriendlyNames(): Promise<number> {
   return targets.length;
 }
 
+/**
+ * Delete ElevenLabs tool documents not referenced by ANY current agent.
+ * Each provision materialises 6 tool docs; deleting an agent used to orphan
+ * them, so the workspace accumulated hundreds. SAFE: only deletes docs that
+ * no live agent references. Pass --keep-tools to skip. Dry-run with
+ * --dry-run-tools (reports the count without deleting).
+ */
+async function wipeOrphanToolDocs(): Promise<number> {
+  const env = await loadEnv();
+  if (!env.ELEVENLABS_API_KEY) return 0;
+  const args = process.argv.slice(2);
+  if (args.includes("--keep-tools")) { console.log("[wipe] tool-doc cleanup skipped (--keep-tools)"); return 0; }
+  const dryRun = args.includes("--dry-run-tools");
+
+  // Referenced tool_ids across every agent (paginated).
+  const agents = await listAgents();
+  const referenced = new Set<string>();
+  for (const a of agents) {
+    const r = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${a.agent_id}`, {
+      headers: { "xi-api-key": env.ELEVENLABS_API_KEY },
+    });
+    if (!r.ok) continue;
+    const d = await r.json();
+    for (const tid of (d?.conversation_config?.agent?.prompt?.tool_ids || [])) referenced.add(tid);
+  }
+
+  // All tool docs.
+  const listRes = await fetch("https://api.elevenlabs.io/v1/convai/tools", {
+    headers: { "xi-api-key": env.ELEVENLABS_API_KEY },
+  });
+  if (!listRes.ok) { console.error("[wipe] list tools:", listRes.status); return 0; }
+  const listJson = await listRes.json();
+  const tools = Array.isArray(listJson) ? listJson : (listJson.tools || []);
+  const orphans = tools.filter((t: any) => !referenced.has(t.id));
+
+  console.log(`[wipe] tool docs: ${tools.length} total, ${referenced.size} referenced, ${orphans.length} orphaned`);
+  if (dryRun) { console.log("[wipe] dry-run — not deleting orphan tool docs"); return 0; }
+
+  let deleted = 0, inUse = 0;
+  for (const t of orphans) {
+    let r = await fetch(`https://api.elevenlabs.io/v1/convai/tools/${t.id}`, {
+      method: "DELETE", headers: { "xi-api-key": env.ELEVENLABS_API_KEY },
+    });
+    // Back off on rate limits and retry a couple of times.
+    let tries = 0;
+    while (r.status === 429 && tries < 3) {
+      await new Promise((res) => setTimeout(res, 1500));
+      r = await fetch(`https://api.elevenlabs.io/v1/convai/tools/${t.id}`, {
+        method: "DELETE", headers: { "xi-api-key": env.ELEVENLABS_API_KEY },
+      });
+      tries++;
+    }
+    if (r.ok || r.status === 404) deleted++;
+    else if (r.status === 409) {
+      /* "Still in use by Unknown/Main" — referenced by an agent our list
+         doesn't surface (e.g. archived). NOT a true orphan; we never
+         force-delete (that could break a hidden agent). Skip safely. */
+      inUse++;
+    }
+    await new Promise((res) => setTimeout(res, 100)); // gentle throttle
+  }
+  console.log(`[wipe] orphan tool docs deleted: ${deleted}, skipped-in-use(409): ${inUse}`);
+  return deleted;
+}
+
 async function main() {
   console.log(`[wipe] tag prefix: ${PREFIX}`);
   const summary = {
@@ -116,6 +181,7 @@ async function main() {
     trialRoutes: await wipeTrialRoutes(),
     agents: await wipeAgents(),
     twilioNumbers: await wipeTwilioFriendlyNames(),
+    orphanToolDocs: await wipeOrphanToolDocs(),
   };
   console.log("[wipe] done:", summary);
 }

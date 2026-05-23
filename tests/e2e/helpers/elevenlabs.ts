@@ -47,6 +47,22 @@ export async function listAgents(): Promise<ElevenLabsAgent[]> {
 }
 
 export async function deleteAgent(agentId: string): Promise<void> {
+  /* Delete the agent's tool documents first, then the agent. Each agent is
+     provisioned with 6 inline tools which ElevenLabs materialises as tool
+     DOCUMENTS; deleting only the agent orphans those docs. Tests churn
+     agents constantly, so without this the workspace accumulates thousands
+     of orphaned tool docs. */
+  try {
+    const agRes = await elFetch(`/v1/convai/agents/${agentId}`);
+    if (agRes.ok) {
+      const ag = await agRes.json() as any;
+      const toolIds: string[] = ag?.conversation_config?.agent?.prompt?.tool_ids || [];
+      for (const tid of toolIds) {
+        await elFetch(`/v1/convai/tools/${tid}`, { method: "DELETE" }).catch(() => {});
+      }
+    }
+  } catch { /* best-effort tool cleanup */ }
+
   const res = await elFetch(`/v1/convai/agents/${agentId}`, { method: "DELETE" });
   if (!res.ok && res.status !== 404) {
     throw new Error(`deleteAgent ${agentId}: ${res.status} ${await res.text()}`);

@@ -30,18 +30,36 @@ const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID") || "";
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN") || "";
 const ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/twilio/inbound_call";
 
+/* Read-only audit. Allow either the service role (CLI) OR a logged-in admin
+   user (so the Internal dashboard can render it). The gateway verifies the
+   JWT signature, so decoding the email claim is safe. ADMIN_EMAILS can be
+   overridden via env (comma-separated). */
+const ADMIN_EMAILS = (Deno.env.get("ADMIN_EMAILS") ||
+  "admin2025@pathir.com,ezi@inethos.net,walkwithcode@gmail.com")
+  .split(",").map((e) => e.trim().toLowerCase()).filter(Boolean);
+
+const CORS = {
+  "Access-Control-Allow-Origin": "*",
+  "Access-Control-Allow-Headers": "authorization, x-client-info, apikey, content-type",
+  "Access-Control-Allow-Methods": "POST, GET, OPTIONS",
+};
+
 Deno.serve(async (req) => {
+  if (req.method === "OPTIONS") return new Response("ok", { headers: CORS });
   const auth = req.headers.get("Authorization") || "";
   const token = auth.replace(/^Bearer\s+/i, "").trim();
-  let role = "";
+  let role = "", email = "";
   try {
     const parts = token.split(".");
     if (parts.length === 3) {
-      role = String(JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/"))).role || "");
+      const payload = JSON.parse(atob(parts[1].replace(/-/g, "+").replace(/_/g, "/")));
+      role = String(payload.role || "");
+      email = String(payload.email || "").toLowerCase();
     }
   } catch { /* not a JWT */ }
-  if (role !== "service_role" && token !== SERVICE_ROLE) {
-    return new Response("forbidden", { status: 403 });
+  const isAdmin = role === "service_role" || token === SERVICE_ROLE || ADMIN_EMAILS.includes(email);
+  if (!isAdmin) {
+    return new Response("forbidden", { status: 403, headers: CORS });
   }
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE);
@@ -141,7 +159,7 @@ Deno.serve(async (req) => {
   );
 
   return new Response(JSON.stringify({ summary, by_speciality: groups }, null, 2), {
-    headers: { "Content-Type": "application/json" },
+    headers: { ...CORS, "Content-Type": "application/json" },
   });
 });
 
