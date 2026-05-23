@@ -191,16 +191,21 @@ export function buildToolDefinitions(supabaseFunctionsUrl: string) {
         },
       },
     },
-    /* System tool: lets the agent hang up so two-way/automated calls and
-       quiet callers don't hold the line to the 10-minute cap (which burns
-       ConvAI minutes). The description is the WHEN — deliberately generous
-       so a real patient who's thinking, looking something up, or pausing is
-       NEVER cut off. */
-    {
-      type: "system",
-      name: "end_call",
-      description:
-        "End the call ONLY when it's genuinely finished: the patient's request is fully handled (e.g. booking confirmed) AND they've said goodbye or confirmed they need nothing else. Give people room — if the patient goes quiet, do NOT end straight away; wait, then gently check in once ('Are you still there? Take your time'). Only end after they confirm they're done, or after a long silence with no reply. Never end while the patient might still be speaking, thinking, or looking something up. After two clear goodbye exchanges, end the call rather than continuing.",
-    },
   ];
 }
+
+/* The end_call SYSTEM tool. ElevenLabs takes system tools in
+   prompt.built_in_tools (keyed by name) — NOT the inline tools array (where
+   they're silently dropped). Lets the agent hang up so two-way/automated
+   calls and quiet callers don't hold the line to the 10-minute cap (which
+   burns ConvAI minutes). The description is the WHEN — deliberately generous
+   so a real patient who's thinking, pausing, or looking something up is
+   NEVER cut off. Used by provision + backfill. */
+export const END_CALL_BUILTIN = {
+  type: "system",
+  name: "end_call",
+  response_timeout_secs: 20,
+  params: { system_tool_type: "end_call" },
+  description:
+    "End the call ONLY when it's genuinely finished: the patient's request is fully handled (e.g. booking confirmed) AND they've said goodbye or confirmed they need nothing else. Give people room — if the patient goes quiet, do NOT end straight away; wait, then gently check in once ('Are you still there? Take your time'). Only end after they confirm they're done, or after a long silence with no reply. Never end while the patient might still be speaking, thinking, or looking something up. After two clear goodbye exchanges, end the call rather than continuing.",
+};

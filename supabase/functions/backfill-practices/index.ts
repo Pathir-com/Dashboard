@@ -25,6 +25,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildAgentConfigForPractice } from "../_shared/industry.ts";
+import { END_CALL_BUILTIN } from "../_shared/agent-config.ts";
 import { ensureBookableCatalog } from "../_shared/catalog.ts";
 import { ensureAgentForPractice } from "../_shared/provision.ts";
 import { ensurePhoneRegisteredToAgent } from "../_shared/phone-registration.ts";
@@ -145,7 +146,15 @@ Deno.serve(async (req) => {
           );
           const r = await patchAgentPrompt(p.elevenlabs_agent_id, {
             conversation_config: {
-              agent: { prompt: { prompt: systemPrompt }, first_message: firstMessage },
+              agent: {
+                prompt: {
+                  prompt: systemPrompt,
+                  // Enable the buffered end_call system tool on existing
+                  // agents without a full reprovision.
+                  built_in_tools: { end_call: END_CALL_BUILTIN },
+                },
+                first_message: firstMessage,
+              },
             },
           });
           entry.agent_patch = { agent_id: p.elevenlabs_agent_id, status: r.status, ok: r.ok, tools: agToolCount };

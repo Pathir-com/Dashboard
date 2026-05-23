@@ -18,7 +18,7 @@
  */
 
 import { SupabaseClient } from "https://esm.sh/@supabase/supabase-js@2";
-import { buildToolDefinitions } from "./agent-config.ts";
+import { buildToolDefinitions, END_CALL_BUILTIN } from "./agent-config.ts";
 import { buildAgentConfigForPractice } from "./industry.ts";
 import { ensureBookableCatalog } from "./catalog.ts";
 
@@ -66,7 +66,12 @@ export async function ensureAgentForPractice(
     name: `${template.agent_persona_name} — ${practice.name}`,
     conversation_config: {
       agent: {
-        prompt: { prompt: systemPrompt, llm: "gpt-4o", tools },
+        prompt: {
+          prompt: systemPrompt,
+          llm: "gpt-4o",
+          tools,
+          built_in_tools: { end_call: END_CALL_BUILTIN }, // agent can hang up (buffered)
+        },
         first_message: firstMessage,
         language: "en",
       },
