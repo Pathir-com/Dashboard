@@ -350,11 +350,24 @@ async function handleLookupCallerPhone(db: DB, args: any) {
   // Create enquiry + conversation + fetch history in parallel
   const enquiryRow = { practice_id: practice.id, patient_name: contact?.name || visitor_name || "Unknown Caller", phone_number: normalised, message: isWebChat ? "Web chat session" : "Incoming phone call", source, is_urgent: false, is_completed: false, contact_id: contact?.id || null };
 
-  const [enquiryResult, convResult, history, lastApptResult] = await Promise.all([
+  const [enquiryResult, convResult, history, lastApptResult, pendingResult] = await Promise.all([
     db.from("enquiries").insert(enquiryRow).select("id").single(),
     db.from("conversations").insert({ practice_id: practice.id, contact_id: contact?.id || null, elevenlabs_conversation_id: conversation_id || null, channel: channelType, status: "active", caller_name: contact?.name || visitor_name || null, caller_phone: normalised }).select("id").single(),
     getConversationHistory(db, { contactId: contact?.id, phone: normalised || undefined, practiceId: practice.id }),
     contact ? db.from("appointments").select("practitioners(name)").eq("contact_id", contact.id).eq("practice_id", practice.id).neq("status", "cancelled").order("starts_at", { ascending: false }).limit(1).single() : Promise.resolve({ data: null }),
+    /* Resume support: a booking that was STARTED but never confirmed — e.g.
+       the previous call dropped or the patient hung up mid-booking. A
+       pending/asap appointment_request from the last 7 days means "we were
+       in the middle of booking X". Surfacing it lets the agent pick up
+       where it left off instead of starting over. */
+    contact
+      ? db.from("appointment_requests")
+          .select("id, status, preferred_date, preferred_time, created_at, services(name)")
+          .eq("contact_id", contact.id).eq("practice_id", practice.id)
+          .in("status", ["pending", "asap"])
+          .gte("created_at", new Date(Date.now() - 7 * 24 * 60 * 60 * 1000).toISOString())
+          .order("created_at", { ascending: false }).limit(1).single()
+      : Promise.resolve({ data: null }),
   ]);
 
   const enquiryId = enquiryResult.data?.id || null;
@@ -365,8 +378,20 @@ async function handleLookupCallerPhone(db: DB, args: any) {
   if (enquiryId && convId) db.from("conversations").update({ enquiry_id: enquiryId }).eq("id", convId).then(() => {});
 
   if (contact) {
-    return { ...base, found: true, contact_id: contact.id, contact_name: contact.name, contact_phone: contact.phone, contact_email: contact.email, contact_dob: contact.date_of_birth, contact_address: contact.address, contact_postcode: contact.postcode, enquiry_id: enquiryId, conversation_db_id: convId, conversation_history: history, last_practitioner: lastPractitioner,
-      message: `Account found. Patient name: ${contact.name}.${lastPractitioner ? ` Last seen by ${lastPractitioner}.` : ""}${history ? `\n\n${history}` : ""}` };
+    // deno-lint-ignore no-explicit-any
+    const pending = pendingResult.data as any;
+    const resumeBooking = pending
+      ? {
+          service: pending.services?.name || "an appointment",
+          preferred_date: pending.preferred_date || null,
+          preferred_time: pending.preferred_time || null,
+        }
+      : null;
+    const resumeLine = resumeBooking
+      ? ` It looks like we started booking ${resumeBooking.service}${resumeBooking.preferred_date ? ` for ${resumeBooking.preferred_date}` : ""} last time but didn't finish — offer to pick that back up.`
+      : "";
+    return { ...base, found: true, contact_id: contact.id, contact_name: contact.name, contact_phone: contact.phone, contact_email: contact.email, contact_dob: contact.date_of_birth, contact_address: contact.address, contact_postcode: contact.postcode, enquiry_id: enquiryId, conversation_db_id: convId, conversation_history: history, last_practitioner: lastPractitioner, resume_booking: resumeBooking,
+      message: `Account found. Patient name: ${contact.name}.${lastPractitioner ? ` Last seen by ${lastPractitioner}.` : ""}${resumeLine}${history ? `\n\n${history}` : ""}` };
   }
   return { ...base, found: false, enquiry_id: enquiryId, conversation_db_id: convId, conversation_history: history,
     message: "No account linked to this number." + (history ? ` However, this number has contacted before:\n\n${history}` : "") };
