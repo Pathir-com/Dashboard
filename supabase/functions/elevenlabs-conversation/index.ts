@@ -26,6 +26,7 @@ import { insertMessages } from "../_shared/conversation.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
+const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY") || "";
 
 Deno.serve(async (req) => {
   if (req.method === "OPTIONS") {
@@ -57,9 +58,33 @@ Deno.serve(async (req) => {
     console.error("[ELEVENLABS CONVERSATION] conversation_id:", body.conversation_id);
 
     const conversationId = body.conversation_id;
-    const transcript = body.transcript || [];
-    const analysis = body.analysis || {};
+    let transcript = body.transcript || [];
+    let analysis = body.analysis || {};
     const metadata = body.metadata || {};
+
+    /* The post-call webhook payload sometimes arrives WITHOUT the turn-by-turn
+       transcript array (we observed the summary landing but zero turns). Rather
+       than depend on the payload shape, fetch the authoritative transcript from
+       ElevenLabs by conversation_id whenever the payload didn't include turns.
+       This makes the dashboard's conversation log reliable regardless of how
+       the webhook is configured or what it omits. */
+    if ((!Array.isArray(transcript) || transcript.length === 0) && conversationId && ELEVENLABS_API_KEY) {
+      try {
+        const r = await fetch(`https://api.elevenlabs.io/v1/convai/conversations/${conversationId}`, {
+          headers: { "xi-api-key": ELEVENLABS_API_KEY },
+        });
+        if (r.ok) {
+          const full = await r.json();
+          if (Array.isArray(full.transcript) && full.transcript.length > 0) transcript = full.transcript;
+          if ((!analysis || Object.keys(analysis).length === 0) && full.analysis) analysis = full.analysis;
+          console.error(`[ELEVENLABS CONVERSATION] Fetched ${transcript.length} turns from ElevenLabs API (payload had none)`);
+        } else {
+          console.error(`[ELEVENLABS CONVERSATION] transcript fetch failed: ${r.status}`);
+        }
+      } catch (e) {
+        console.error("[ELEVENLABS CONVERSATION] transcript fetch error:", e instanceof Error ? e.message : e);
+      }
+    }
 
     if (!conversationId) {
       console.error("[ELEVENLABS CONVERSATION] No conversation_id. Raw keys:", Object.keys(rawBody));
