@@ -25,7 +25,6 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { buildAgentConfigForPractice } from "../_shared/industry.ts";
-import { buildToolDefinitions } from "../_shared/agent-config.ts";
 import { ensureBookableCatalog } from "../_shared/catalog.ts";
 import { ensureAgentForPractice } from "../_shared/provision.ts";
 import { ensurePhoneRegisteredToAgent } from "../_shared/phone-registration.ts";
@@ -36,7 +35,6 @@ const ELEVENLABS_API_KEY = Deno.env.get("ELEVENLABS_API_KEY") || "";
 const TWILIO_SID = Deno.env.get("TWILIO_ACCOUNT_SID") || "";
 const TWILIO_TOKEN = Deno.env.get("TWILIO_AUTH_TOKEN") || "";
 const ELEVENLABS_VOICE_URL = "https://api.elevenlabs.io/twilio/inbound_call";
-const FUNCTIONS_URL = `${SUPABASE_URL}/functions/v1`;
 
 async function patchAgentPrompt(agentId: string, body: Record<string, unknown>) {
   return fetch(`https://api.elevenlabs.io/v1/convai/agents/${agentId}`, {
@@ -44,6 +42,18 @@ async function patchAgentPrompt(agentId: string, body: Record<string, unknown>) 
     headers: { "xi-api-key": ELEVENLABS_API_KEY, "Content-Type": "application/json" },
     body: JSON.stringify(body),
   });
+}
+
+/** How many tools the agent can actually call (tool_ids or inline). Zero
+ *  means it can't book/look-up anything — it will hallucinate actions. */
+async function agentToolCount(agentId: string): Promise<number> {
+  const r = await fetch(`https://api.elevenlabs.io/v1/convai/agents/${agentId}`, {
+    headers: { "xi-api-key": ELEVENLABS_API_KEY },
+  });
+  if (!r.ok) return -1; // unknown (agent fetch failed)
+  const d = await r.json();
+  const pr = d?.conversation_config?.agent?.prompt || {};
+  return (pr.tool_ids?.length || 0) || (pr.tools?.length || 0);
 }
 
 Deno.serve(async (req) => {
@@ -99,49 +109,45 @@ Deno.serve(async (req) => {
         }
       }
 
-      // 2. Voice prompt — PATCH the existing agent (keep agent_id).
+      // 2. Voice prompt + tool integrity.
       if (p.elevenlabs_agent_id && ELEVENLABS_API_KEY) {
-        const [{ data: practitioners }, { data: services }] = await Promise.all([
-          db.from("practitioners").select("name, title, credentials, services, bio")
-            .eq("practice_id", p.id).order("sort_order", { ascending: true }),
-          db.from("services").select("name, category, price_pence, duration_minutes, description")
-            .eq("practice_id", p.id).order("name", { ascending: true }),
-        ]);
-        const { systemPrompt, firstMessage } = await buildAgentConfigForPractice(
-          db, p, practitioners || [], services || [],
-        );
-        /* First try: PATCH prompt TEXT + first_message only. Healthy agents
-           keep their existing tool documents untouched (migration 024 only
-           changes wording). */
-        let r = await patchAgentPrompt(p.elevenlabs_agent_id, {
-          conversation_config: {
-            agent: { prompt: { prompt: systemPrompt }, first_message: firstMessage },
-          },
-        });
-
-        /* Self-heal: some agents have dangling tool_ids (tool documents that
-           were deleted), so ANY PATCH 404s on document_not_found — that's
-           Spark. Retry clearing the broken tool_ids and installing fresh
-           inline tool definitions, which repairs the agent's tooling and
-           updates the prompt in one go. */
-        if (!r.ok) {
-          const errText = await r.text();
-          if (/document_not_found|not_found/i.test(errText)) {
-            const tools = buildToolDefinitions(FUNCTIONS_URL);
-            r = await patchAgentPrompt(p.elevenlabs_agent_id, {
-              conversation_config: {
-                agent: {
-                  prompt: { prompt: systemPrompt, llm: "gpt-4o", tool_ids: [], tools },
-                  first_message: firstMessage,
-                  language: "en",
-                },
-              },
-            });
-            entry.agent_repaired_tools = r.ok;
+        /* Check the agent actually has tools. An agent with zero tools
+           (tool_ids AND inline both empty) can't call request_appointment
+           etc. — it just hallucinates "I've booked you" while nothing
+           syncs (no calendar entry, no SMS, no log). That's the real cause
+           of the Spark call bug. ElevenLabs IGNORES inline `tools` on PATCH
+           (only honours tool_ids / documents), so a PATCH can't restore
+           them — the reliable repair is a force re-provision, which on
+           CREATE does install working tools (Baker Street proves it). */
+        const agToolCount = await agentToolCount(p.elevenlabs_agent_id);
+        if (agToolCount === 0) {
+          try {
+            const reprov = await ensureAgentForPractice(db, p, { force: true });
+            p.elevenlabs_agent_id = reprov.agent_id; // step 4 re-registers number to it
+            entry.agent_reprovisioned_for_tools = { new_agent_id: reprov.agent_id };
+          } catch (e) {
+            entry.agent_reprovision_error = (e as Error).message;
           }
+        } else {
+          // Healthy tools — only refresh the prompt TEXT (migration 024
+          // wording), leaving tool_ids untouched.
+          const [{ data: practitioners }, { data: services }] = await Promise.all([
+            db.from("practitioners").select("name, title, credentials, services, bio")
+              .eq("practice_id", p.id).order("sort_order", { ascending: true }),
+            db.from("services").select("name, category, price_pence, duration_minutes, description")
+              .eq("practice_id", p.id).order("name", { ascending: true }),
+          ]);
+          const { systemPrompt, firstMessage } = await buildAgentConfigForPractice(
+            db, p, practitioners || [], services || [],
+          );
+          const r = await patchAgentPrompt(p.elevenlabs_agent_id, {
+            conversation_config: {
+              agent: { prompt: { prompt: systemPrompt }, first_message: firstMessage },
+            },
+          });
+          entry.agent_patch = { agent_id: p.elevenlabs_agent_id, status: r.status, ok: r.ok, tools: agToolCount };
           if (!r.ok) entry.agent_patch_error = (await r.text()).slice(0, 200);
         }
-        entry.agent_patch = { agent_id: p.elevenlabs_agent_id, status: r.status, ok: r.ok };
       } else {
         entry.agent_patch = "skipped (no agent or no EL key)";
       }
