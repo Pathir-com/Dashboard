@@ -66,7 +66,16 @@ export function buildToolDefinitions(supabaseFunctionsUrl: string) {
         request_body_schema: {
           type: "object",
           properties: {
-            caller_phone: { type: "string", description: "The caller's phone number if known" },
+            /* On a PHONE call the LLM has no way to know the caller's number,
+               the practice, or the agent. ElevenLabs injects these as system
+               dynamic variables — wire them so they're passed silently and
+               the tool can resolve the practice (by agent_id) and the
+               contact (by caller_id). Without this, phone calls resolve no
+               practice → "Practice not found" → no enquiry, no booking. */
+            caller_phone: { type: "string", description: "The caller's phone number", dynamic_variable: "system__caller_id" },
+            agent_id: { type: "string", description: "The ElevenLabs agent id (resolves the practice on phone calls)", dynamic_variable: "system__agent_id" },
+            twilio_number: { type: "string", description: "The number the caller dialled", dynamic_variable: "system__called_number" },
+            conversation_id: { type: "string", description: "ElevenLabs conversation id (links the post-call transcript)", dynamic_variable: "system__conversation_id" },
             practice_id: { type: "string", description: "The practice ID (from dynamic variables for web chat)" },
             contact_id: { type: "string", description: "The contact ID if already known" },
             visitor_name: { type: "string", description: "The visitor's name (web chat)" },
@@ -142,6 +151,7 @@ export function buildToolDefinitions(supabaseFunctionsUrl: string) {
           type: "object",
           properties: {
             practice_id: { type: "string", description: "The practice ID" },
+            agent_id: { type: "string", description: "Resolves the practice on phone calls", dynamic_variable: "system__agent_id" },
             service_name: { type: "string", description: "The service the patient wants" },
             preference_day: { type: "string", description: "Preferred day of the week" },
             preference_time: { type: "string", description: "morning, afternoon, or specific time like 14:00" },
@@ -163,6 +173,7 @@ export function buildToolDefinitions(supabaseFunctionsUrl: string) {
           type: "object",
           properties: {
             practice_id: { type: "string", description: "The practice ID" },
+            agent_id: { type: "string", description: "Resolves the practice on phone calls", dynamic_variable: "system__agent_id" },
             contact_id: { type: "string", description: "The contact ID" },
             service_id: { type: "string", description: "The service_id from search_availability" },
             enquiry_id: { type: "string", description: "The enquiry_id from lookup" },

@@ -73,8 +73,11 @@ Deno.serve(async (req) => {
   }
 
   // Optional: limit to one practice via ?practice_id= for targeted re-runs.
+  // ?force=true force-reprovisions every agent — used to roll a new tool
+  // definition (e.g. system dynamic variables) out to existing agents.
   const url = new URL(req.url);
   const onlyPracticeId = url.searchParams.get("practice_id");
+  const forceReprovision = url.searchParams.get("force") === "true";
 
   const db = createClient(SUPABASE_URL, SERVICE_ROLE);
   let q = db
@@ -120,11 +123,11 @@ Deno.serve(async (req) => {
            them — the reliable repair is a force re-provision, which on
            CREATE does install working tools (Baker Street proves it). */
         const agToolCount = await agentToolCount(p.elevenlabs_agent_id);
-        if (agToolCount === 0) {
+        if (agToolCount === 0 || forceReprovision) {
           try {
             const reprov = await ensureAgentForPractice(db, p, { force: true });
             p.elevenlabs_agent_id = reprov.agent_id; // step 4 re-registers number to it
-            entry.agent_reprovisioned_for_tools = { new_agent_id: reprov.agent_id };
+            entry.agent_reprovisioned_for_tools = { new_agent_id: reprov.agent_id, reason: agToolCount === 0 ? "zero_tools" : "force" };
           } catch (e) {
             entry.agent_reprovision_error = (e as Error).message;
           }

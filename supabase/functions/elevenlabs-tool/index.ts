@@ -443,9 +443,12 @@ async function handleUpdateAddress(db: DB, args: any) {
 
 // deno-lint-ignore no-explicit-any
 async function handleSearchAvailability(db: DB, args: any) {
-  let { practice_id, service_name, preference_day, preference_time, preference_date, is_urgent, contact_id } = args;
+  let { practice_id, agent_id, service_name, preference_day, preference_time, preference_date, is_urgent, contact_id } = args;
   if (!service_name) return { success: false, message: "Missing service name." };
 
+  // Resolve practice by agent_id (system var on phone calls) if the LLM
+  // didn't carry practice_id forward from the lookup result.
+  if (!practice_id && agent_id) { const p = await loadPractice(db, { agentId: agent_id }); practice_id = p?.id; }
   if (!practice_id) { const p = await loadPractice(db, {}); practice_id = p?.id; }
   if (!practice_id) return { success: false, message: "Practice not found." };
 
@@ -522,7 +525,7 @@ async function handleSearchAvailability(db: DB, args: any) {
 
 // deno-lint-ignore no-explicit-any
 async function handleRequestAppointment(db: DB, args: any) {
-  let { practice_id, contact_id, service_id, chosen_slot, is_urgent = false, notes, enquiry_id,
+  let { practice_id, agent_id, contact_id, service_id, chosen_slot, is_urgent = false, notes, enquiry_id,
         slot_practitioner_id, slot_date, slot_start_time, slot_end_time, slot_practitioner_name } = args;
 
   // Accept flat slot fields
@@ -530,6 +533,8 @@ async function handleRequestAppointment(db: DB, args: any) {
     chosen_slot = { practitioner_id: slot_practitioner_id || null, date: slot_date, start_time: slot_start_time, end_time: slot_end_time || slot_start_time, practitioner_name: slot_practitioner_name || null };
   }
 
+  // Resolve practice by agent_id (system var on phone calls) if needed.
+  if (!practice_id && agent_id) { const p = await loadPractice(db, { agentId: agent_id }); practice_id = p?.id; }
   if (!practice_id) { const p = await loadPractice(db, {}); practice_id = p?.id; }
   if (!practice_id) return { success: false, message: "Practice not found." };
 
