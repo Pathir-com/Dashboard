@@ -9,7 +9,8 @@
     "preview": "vite preview",
     "test": "vitest run --reporter=verbose",
     "test:watch": "vitest",
-    "test:wipe": "node --import tsx/esm tests/e2e/wipe.ts"
+    "test:wipe": "node --import tsx/esm tests/e2e/wipe.ts",
+    "test:ui": "playwright test"
   },
   "dependencies": {
     "@hello-pangea/dnd": "^17.0.0",
@@ -66,6 +67,7 @@
     "zod": "^3.24.2"
   },
   "devDependencies": {
+    "@playwright/test": "^1.60.0",
     "@types/node": "^22.19.17",
     "@types/react": "^18.2.66",
     "@types/react-dom": "^18.2.22",
