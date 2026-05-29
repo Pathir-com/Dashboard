@@ -13,13 +13,15 @@
 import { describe, expect, it } from "vitest";
 import { loadEnv } from "../helpers/env.ts";
 
+/* chatbase-webhook is intentionally NOT here: it verifies HMAC sig at the
+   function level and 401s unsigned bodies on purpose. The drift this test
+   catches is the *Supabase gateway* verify_jwt flag, not in-function auth. */
 const WEBHOOKS = [
   "twilio-sms-webhook",
   "textmagic-webhook",
   "vonage-webhook",
   "signalwire-webhook",
   "meta-webhook",
-  "chatbase-webhook",
   "vapi-webhook",
   "elevenlabs-webhook",
 ];
