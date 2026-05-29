@@ -39,21 +39,30 @@ START_TS=$(date -u -d "1 second ago" +"%Y-%m-%dT%H:%M:%S+00:00")
 LAST_SEEN_TS="$START_TS"
 
 echo ""
+LIVE_ROOT="/home/ubuntu/Paltir/demo/live"
+BRAIN_SCRIPT="$LIVE_ROOT/tests/live/patient-brain.ts"
+HISTORY_JSON='[]'
+PERSONA='You are Sam Rivers, a patient texting a brand-new dental clinic to book a routine check-up. Name Sam Rivers, DOB 3rd March 1990. Reply with ONE short SMS sentence per turn — no quotes, no labels. When a specific time slot is offered, accept it ("Yes, please book that one"). Once the clinic confirms it is booked, say "Thank you, goodbye!" and stop.'
+push_hist() { HISTORY_JSON=$(python3 -c "import json,sys; h=json.loads(sys.argv[1]); h.append({'role':sys.argv[2],'text':sys.argv[3]}); print(json.dumps(h))" "$HISTORY_JSON" "$1" "$2"); }
+brain() {
+  local out
+  out=$(cd "$LIVE_ROOT" && echo "$HISTORY_JSON" | PATIENT_PERSONA="$PERSONA" DOTENV_CONFIG_QUIET=true npx --silent tsx "$BRAIN_SCRIPT" 2>/dev/null | grep -v "^\[dotenv" | tail -1)
+  if [ -z "$out" ]; then echo "Yes please.|"; return; fi
+  local t="$(echo "$out" | tr '[:upper:]' '[:lower:]')"
+  local done=""
+  if echo "$t" | grep -qE "goodbye|^thank you[!.]*$|^thanks[!.]*$"; then done="DONE"; fi
+  echo "$out|$done"
+}
+
 echo "=== TURN 1 — patient opens (NEW account inbound) ==="
-OPEN="Hi, I'd like to book a dental check-up next Friday at 10am. Name: Test Patient, DOB 1st January 1990."
+cd "$LIVE_ROOT" && npx --silent tsx "$BRAIN_SCRIPT" --cleanup 2>/dev/null || true
+OPEN="Hi, I'd like to book a dental check-up next Friday at 10am. Name Sam Rivers, DOB 3rd March 1990."
 echo "  → $OPEN"
+push_hist "patient" "$OPEN"
 curl -sS -o /dev/null -X POST "$WEBHOOK" -H "Content-Type: application/x-www-form-urlencoded" \
   --data-urlencode "sender=$PATIENT" --data-urlencode "receiver=+447418341716" --data-urlencode "text=$OPEN" --data-urlencode "messageId=na_$RANDOM"
 
-scripted() {
-  local t="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
-  if echo "$t" | grep -qE "booked|confirmed|all set|all booked"; then echo "Thank you, goodbye!|DONE"; return; fi
-  if echo "$t" | grep -qE "name|date of birth|dob|details"; then echo "Test Patient, 1st January 1990.|"; return; fi
-  if echo "$t" | grep -qE "slot|available|how about|works for you|at [0-9]|noon|morning|afternoon"; then echo "Yes, please book that one.|"; return; fi
-  echo "Yes please go ahead.|"
-}
-
-for turn in 2 3 4 5; do
+for turn in 2 3 4 5 6 7 8; do
   echo ""
   echo "(turn $turn — waiting up to 30s for AI reply…)"
   for i in 1 2 3 4 5 6; do
@@ -69,14 +78,18 @@ except: print('')")
   if [ -z "$R" ]; then echo "  (no reply — ending)"; break; fi
   echo "  ← agent: ${R:0:90}"
   LAST_SEEN_TS=$(date -u +"%Y-%m-%dT%H:%M:%S+00:00")
-  RESULT=$(scripted "$R")
+  push_hist "clinic" "$R"
+  RESULT=$(brain)
   NEXT="${RESULT%|*}"
   DONE="${RESULT##*|}"
-  echo "  → patient: $NEXT"
+  echo "  → patient [elevenlabs]: $NEXT"
+  push_hist "patient" "$NEXT"
   curl -sS -o /dev/null -X POST "$WEBHOOK" -H "Content-Type: application/x-www-form-urlencoded" \
     --data-urlencode "sender=$PATIENT" --data-urlencode "receiver=+447418341716" --data-urlencode "text=$NEXT" --data-urlencode "messageId=na${turn}_$RANDOM"
   [ "$DONE" = "DONE" ] && sleep 4 && break
 done
+
+cd "$LIVE_ROOT" && npx --silent tsx "$BRAIN_SCRIPT" --cleanup 2>/dev/null || true
 
 sleep 5
 echo ""
@@ -89,6 +102,16 @@ if isinstance(d,list):
   for r in d:
     arrow='→ patient' if r['role']=='patient' else '← clinic '
     print(f'  {arrow} | {r[\"text\"]}')
+"
+
+echo ""
+echo "=== appointment(s) committed (London local time) ==="
+q "SELECT to_char(starts_at AT TIME ZONE 'Europe/London','YYYY-MM-DD HH24:MI') london, source, status FROM appointments WHERE practice_id='$PID'" | python3 -c "
+import json,sys
+d=json.load(sys.stdin)
+if isinstance(d,list):
+  print(f'appts: {len(d)}')
+  for r in d: print('  -', r)
 "
 
 echo ""

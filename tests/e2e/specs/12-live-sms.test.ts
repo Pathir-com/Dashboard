@@ -75,14 +75,83 @@ async function pollInboundFor(patient: string, sinceIso: string, alreadySeen: Se
   return null;
 }
 
-/* Patient brain — tries Claude (ANTHROPIC_API_KEY) → GPT (OPENAI_API_KEY)
-   → scripted fallback. No SDK; both APIs are plain HTTP. Drop either key
-   in env and the test "upgrades" itself to a natural LLM-driven patient.
-   The contract is the same in all three modes: full chat so far in, next
+/* Patient brain — tries ElevenLabs (via WebSocket to a throwaway ConvAI
+   agent — Claude/GPT under the hood, no separate key needed) → Claude
+   (ANTHROPIC_API_KEY) → GPT (OPENAI_API_KEY) → scripted fallback. The EL
+   path is the default because the EL key is always available in env.
+   Contract is the same across all four modes: full chat so far in, next
    patient text + done flag out. */
 const PATIENT_PERSONA = `You are Sam Rivers, a patient texting a dental clinic to book an appointment. Goal: get a routine check-up booked for next Friday morning. If asked your name, say Sam Rivers; DOB 3rd March 1990. When a specific slot is offered, accept it ("Yes please book that one"). Once the clinic confirms it's booked, reply "Thank you, goodbye!" and stop. One short SMS-style sentence per reply. Reply with JUST the text you would send — no labels, no quotes, no explanation.`;
 
 interface ChatTurn { role: "clinic" | "patient"; text: string }
+
+/* ElevenLabs WebSocket brain. Each call opens a fresh ConvAI conversation
+   against a throwaway patient agent (id cached for the test run); the
+   prompt_override carries the full history so the agent has context.
+   Bypasses needing Anthropic/OpenAI keys — EL runs Claude or GPT internally. */
+let _patientAgentId: string | null = null;
+async function ensurePatientAgent(env: { ELEVENLABS_API_KEY: string }): Promise<string> {
+  if (_patientAgentId) return _patientAgentId;
+  const r = await fetch("https://api.elevenlabs.io/v1/convai/agents/create", {
+    method: "POST",
+    headers: { "xi-api-key": env.ELEVENLABS_API_KEY, "content-type": "application/json" },
+    body: JSON.stringify({
+      name: `Test Patient Brain ${runId()}`,
+      conversation_config: {
+        agent: { prompt: { prompt: PATIENT_PERSONA, llm: "gpt-4o" }, first_message: "", language: "en" },
+      },
+    }),
+  });
+  if (!r.ok) throw new Error(`patient-agent create ${r.status}: ${await r.text()}`);
+  const d = await r.json() as { agent_id: string };
+  _patientAgentId = d.agent_id;
+  return _patientAgentId;
+}
+
+async function elevenlabsTurn(history: ChatTurn[]): Promise<string | null> {
+  const env = await loadEnv();
+  if (!env.ELEVENLABS_API_KEY) return null;
+  const WS = (await import("ws")).default as unknown as typeof import("ws").WebSocket;
+  const agentId = await ensurePatientAgent(env);
+  const signed = await fetch(`https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`, { headers: { "xi-api-key": env.ELEVENLABS_API_KEY } });
+  if (!signed.ok) return null;
+  const { signed_url } = await signed.json() as { signed_url: string };
+
+  /* Embed the full conversation into the prompt override so a fresh WS
+     connection has full context. Last clinic turn becomes user_message. */
+  const last = history.findLast?.((t) => t.role === "clinic")?.text || "";
+  const ctx = history.slice(0, -1).map((t) => `${t.role === "patient" ? "you" : "clinic"}: ${t.text}`).join("\n");
+  const promptWithCtx = `${PATIENT_PERSONA}\n\nConversation so far:\n${ctx || "(none)"}\n\nThe clinic just said the user_message below — reply as the patient with ONE short SMS sentence.`;
+
+  return await new Promise<string | null>((resolve) => {
+    let replyText: string | null = null;
+    let agentResponses = 0;
+    let done = false;
+    const finish = (v: string | null) => { if (done) return; done = true; clearTimeout(timer); try { (ws as any).close(); } catch { /* */ } resolve(v); };
+    const timer = setTimeout(() => finish(replyText), 30_000);
+    const ws = new WS(signed_url);
+    ws.on("open", () => {
+      ws.send(JSON.stringify({
+        type: "conversation_initiation_client_data",
+        conversation_config_override: { agent: { prompt: { prompt: promptWithCtx, tools: [] }, first_message: "", language: "en" } },
+      }));
+    });
+    ws.on("message", (raw: any) => {
+      let d: any; try { d = JSON.parse(raw.toString()); } catch { return; }
+      if (d.type === "conversation_initiation_metadata") {
+        ws.send(JSON.stringify({ type: "user_message", text: last }));
+      } else if (d.type === "agent_response") {
+        agentResponses++;
+        if (agentResponses === 1) {
+          const t = d.agent_response_event?.agent_response;
+          if (typeof t === "string" && t.trim()) finish(t.trim());
+        }
+      }
+    });
+    ws.on("error", () => finish(null));
+    ws.on("close", () => finish(replyText));
+  });
+}
 
 async function claudeTurn(history: ChatTurn[]): Promise<string | null> {
   const key = process.env.ANTHROPIC_API_KEY;
@@ -124,14 +193,24 @@ function scriptedTurn(agentText: string): string {
 
 async function nextPatientReply(history: ChatTurn[]): Promise<{ text: string; done: boolean; brain: string }> {
   const last = history.findLast?.((t) => t.role === "clinic")?.text || "";
-  const text =
-    (await claudeTurn(history)) ??
-    (await gptTurn(history)) ??
-    scriptedTurn(last);
-  const brain = process.env.ANTHROPIC_API_KEY ? "claude" : process.env.OPENAI_API_KEY ? "gpt" : "scripted";
-  // "Done" is decided by content not source — same termination rule whichever brain spoke.
+  // EL is the default since its key is always set. Anthropic/OpenAI keys
+  // are alternatives if env explicitly chooses them; scripted is the last
+  // resort if every LLM path fails (e.g. WS timeout).
+  let brain = "scripted";
+  let text: string | null = null;
+  if (process.env.ANTHROPIC_API_KEY) { text = await claudeTurn(history); brain = text ? "claude" : brain; }
+  if (!text && process.env.OPENAI_API_KEY) { text = await gptTurn(history); brain = text ? "gpt" : brain; }
+  if (!text) { text = await elevenlabsTurn(history); brain = text ? "elevenlabs" : brain; }
+  if (!text) { text = scriptedTurn(last); brain = "scripted"; }
   const done = /goodbye|^thank you[!.]*$|^thanks[!.]*$/i.test(text.trim());
   return { text, done, brain };
+}
+
+async function cleanupPatientBrain() {
+  if (!_patientAgentId) return;
+  const env = await loadEnv();
+  await fetch(`https://api.elevenlabs.io/v1/convai/agents/${_patientAgentId}`, { method: "DELETE", headers: { "xi-api-key": env.ELEVENLABS_API_KEY } }).catch(() => {});
+  _patientAgentId = null;
 }
 
 describe(`Live two-way SMS [${runId()}]`, () => {
@@ -219,5 +298,8 @@ describe(`Live two-way SMS [${runId()}]`, () => {
 
 afterAll(async () => {
   if (!RUN) return;
+  // Throwaway voice patient agent (for the cross-channel call leg).
   if (patientAgentId) try { await deleteAgent(patientAgentId); } catch { /* */ }
+  // Throwaway text patient brain (ElevenLabs ConvAI agent for SMS turns).
+  await cleanupPatientBrain();
 });

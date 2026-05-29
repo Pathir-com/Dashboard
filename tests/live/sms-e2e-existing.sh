@@ -34,20 +34,30 @@ except: print('')
 "
 }
 
-scripted() {
-  local t="$(echo "$1" | tr '[:upper:]' '[:lower:]')"
-  # Most specific (terminations) first, then info-asks (clinic before consultation),
-  # then slot offers, then generic. Pattern order is what tripped the loop before.
-  if echo "$t" | grep -qE "booked|confirmed|all set|all booked"; then echo "Thank you, goodbye!|DONE"; return; fi
-  if echo "$t" | grep -qE "which clinic|clinic location|location.*prefer"; then echo "Knightsbridge please.|"; return; fi
-  if echo "$t" | grep -qE "name|date of birth|dob|details"; then echo "Alex Carter, 5th May 1990.|"; return; fi
-  if echo "$t" | grep -qE "which service|service you|service.*book"; then echo "FUE Hair Transplant consultation please.|"; return; fi
-  if echo "$t" | grep -qE "slot|available|how about|works for you|at [0-9]|noon|morning|afternoon"; then echo "Yes, please book that one.|"; return; fi
-  echo "Yes please go ahead.|"
+# ─── LLM-driven patient brain (ElevenLabs ConvAI → Claude/GPT under the hood) ───
+LIVE_ROOT="/home/ubuntu/Paltir/demo/live"
+BRAIN_SCRIPT="$LIVE_ROOT/tests/live/patient-brain.ts"
+HISTORY_JSON='[]'
+PERSONA='You are Alex Carter, a patient texting Berkeley Hair Clinic for an FUE hair-transplant consultation. Preferred location: Knightsbridge. DOB 5th May 1990. Reply with ONE short SMS sentence per turn — no quotes, no labels. When a specific time slot is offered, accept it. Once the clinic confirms it is booked, say "Thank you, goodbye!" and stop.'
+
+push_hist() {
+  HISTORY_JSON=$(python3 -c "import json,sys; h=json.loads(sys.argv[1]); h.append({'role':sys.argv[2],'text':sys.argv[3]}); print(json.dumps(h))" "$HISTORY_JSON" "$1" "$2")
+}
+
+brain() {
+  # dotenv writes a "[dotenv@17.x] injecting env..." tip to STDOUT — strip it.
+  local out
+  out=$(cd "$LIVE_ROOT" && echo "$HISTORY_JSON" | PATIENT_PERSONA="$PERSONA" DOTENV_CONFIG_QUIET=true npx --silent tsx "$BRAIN_SCRIPT" 2>/dev/null | grep -v "^\[dotenv" | tail -1)
+  if [ -z "$out" ]; then echo "Yes please.|"; return; fi
+  local t="$(echo "$out" | tr '[:upper:]' '[:lower:]')"
+  local done=""
+  if echo "$t" | grep -qE "goodbye|^thank you[!.]*$|^thanks[!.]*$"; then done="DONE"; fi
+  echo "$out|$done"
 }
 
 echo "=== setup: trial route $PATIENT → Berkeley ==="
 q "INSERT INTO sms_trial_routes (user_phone, practice_id, expires_at) VALUES ('$PATIENT', '$BERK', now() + interval '1 day') ON CONFLICT (user_phone) DO UPDATE SET practice_id=EXCLUDED.practice_id, expires_at=EXCLUDED.expires_at" >/dev/null
+echo "=== cleanup any prior brain agent ==="; cd "$LIVE_ROOT" && npx --silent tsx "$BRAIN_SCRIPT" --cleanup 2>/dev/null || true
 
 START_TS=$(date -u -d "1 second ago" +"%Y-%m-%dT%H:%M:%S+00:00")
 LAST_SEEN_TS="$START_TS"
@@ -56,9 +66,10 @@ echo ""
 echo "=== TURN 1 — patient opens ==="
 OPEN="Hi, I'd like to book a hair consultation. I'm Alex Carter, DOB 5th May 1990. Anything Friday morning works."
 echo "  → $OPEN"
+push_hist "patient" "$OPEN"
 send "$OPEN"
 
-for turn in 2 3 4 5 6; do
+for turn in 2 3 4 5 6 7 8; do
   echo ""
   echo "(turn $turn — waiting up to 30s for a new clinic reply…)"
   for i in 1 2 3 4 5 6; do
@@ -69,13 +80,17 @@ for turn in 2 3 4 5 6; do
   if [ -z "$R" ]; then echo "  (no clinic reply landed — ending)"; break; fi
   echo "  ← agent: ${R:0:100}"
   LAST_SEEN_TS=$(date -u +"%Y-%m-%dT%H:%M:%S+00:00")
-  PARTS=$(scripted "$R")
+  push_hist "clinic" "$R"
+  PARTS=$(brain)
   NEXT="${PARTS%|*}"
   DONE="${PARTS##*|}"
-  echo "  → patient: $NEXT"
+  echo "  → patient [elevenlabs]: $NEXT"
+  push_hist "patient" "$NEXT"
   send "$NEXT"
   if [ "$DONE" = "DONE" ]; then sleep 4; break; fi
 done
+
+cd "$LIVE_ROOT" && npx --silent tsx "$BRAIN_SCRIPT" --cleanup 2>/dev/null || true
 
 sleep 5
 echo ""
