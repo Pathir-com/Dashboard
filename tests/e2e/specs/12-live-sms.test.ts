@@ -139,6 +139,15 @@ describe(`Live two-way SMS [${runId()}]`, () => {
     if (!RUN) { console.log("[12-live-sms] skipped — set RUN_LIVE_SMS=1"); expect(true).toBe(true); return; }
     const sb = await admin();
     const env = await loadEnv();
+    /* Pre-check: UK geographic numbers (+44 1xx/2xx) aren't SMS-capable in
+       Twilio. Skip with a clear message rather than fail — running the
+       suite shouldn't be blocked by infra we can't always procure (UK
+       mobile inventory is regularly empty). Set LIVE_SMS_PATIENT_NUMBER to
+       a verified SMS-capable Twilio number to actually run. */
+    const auth0 = Buffer.from(`${env.TWILIO_ACCOUNT_SID}:${env.TWILIO_AUTH_TOKEN}`).toString("base64");
+    const probe = await fetch(`https://api.twilio.com/2010-04-01/Accounts/${env.TWILIO_ACCOUNT_SID}/IncomingPhoneNumbers.json?PhoneNumber=${encodeURIComponent(PATIENT)}`, { headers: { Authorization: `Basic ${auth0}` } }).then((r) => r.json()).catch(() => null);
+    const cap = probe?.incoming_phone_numbers?.[0]?.capabilities?.sms;
+    if (!cap) { console.log(`[12-live-sms] skipped — ${PATIENT} is not SMS-capable (set LIVE_SMS_PATIENT_NUMBER to a UK mobile we own)`); expect(true).toBe(true); return; }
     const testStart = new Date().toISOString();
     const { count: appBefore } = await sb.from("appointments").select("id", { count: "exact", head: true }).eq("practice_id", SPARK_ID);
     const { data: contactBefore } = await sb.from("contacts").select("id").eq("practice_id", SPARK_ID).eq("phone", PATIENT).limit(1).single();

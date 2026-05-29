@@ -162,6 +162,15 @@ Deno.serve(async (req) => {
     const integrations = practice.integrations || {};
     const tm = integrations.textmagic || {};
 
+    /* Honour the master SMS toggle (integrations.sms_enabled). The
+       twilio-sms-webhook checked it; this one didn't — meaning a practice
+       that flipped SMS off in the dashboard was still being replied to on
+       TextMagic-routed inbound. Same behaviour both webhooks now. */
+    if (integrations.sms_enabled === false) {
+      console.log(`[TEXTMAGIC WEBHOOK] SMS toggled off for ${practice.name}`);
+      return new Response("OK", { status: 200 });
+    }
+
     if (tm.enabled === false) {
       console.log(`[TEXTMAGIC WEBHOOK] TextMagic disabled for ${practice.name}`);
       return new Response("OK", { status: 200 });
