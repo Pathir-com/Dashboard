@@ -78,12 +78,21 @@ export async function ensureAgentForPractice(
       tts: {
         voice_id: "TVmbglAk3F1GkiCoOq47",
         model_id: "eleven_turbo_v2",
-        optimize_streaming_latency: 3,
-        stability: 0.5,
+        /* Streaming latency: 3 was over-aggressive — patients reported Poppy
+           "cutting out" mid-word during the Mon 25 May QA call. Level 2 is
+           the ElevenLabs recommended sweet spot for phone (still low
+           latency, far fewer audio dropouts). */
+        optimize_streaming_latency: 2,
+        stability: 0.55,            // a touch higher → fewer artefacts
         speed: 1,
         similarity_boost: 0.75,
       },
-      turn: { turn_timeout: 15, turn_eagerness: "normal" },
+      /* Turn-taking: turn_timeout 20s (was 15) so the agent doesn't barge
+         in on a patient who's thinking; eagerness "eager" makes the agent
+         more confident to keep speaking through brief background noise
+         (breath, cough, line crackle) instead of stopping mid-sentence —
+         which a caller perceives as "she cut out". */
+      turn: { turn_timeout: 20, turn_eagerness: "eager" },
       conversation: { max_duration_seconds: 600 },
     },
     platform_settings: {

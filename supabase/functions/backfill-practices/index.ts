@@ -155,6 +155,15 @@ Deno.serve(async (req) => {
                 },
                 first_message: firstMessage,
               },
+              // Audio + turn-taking tuning (Mon 25 May QA call: Poppy
+              // "cut out" mid-word). Lower streaming-latency aggression +
+              // longer turn timeout + eager turn-taking so brief background
+              // noise doesn't stop the agent mid-sentence.
+              tts: {
+                optimize_streaming_latency: 2,
+                stability: 0.55,
+              },
+              turn: { turn_timeout: 20, turn_eagerness: "eager" },
             },
           });
           entry.agent_patch = { agent_id: p.elevenlabs_agent_id, status: r.status, ok: r.ok, tools: agToolCount };
