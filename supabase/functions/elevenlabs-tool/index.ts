@@ -15,7 +15,7 @@
 
 import { createClient } from "https://esm.sh/@supabase/supabase-js@2";
 import { corsHeaders } from "../_shared/cors.ts";
-import { getUKDateTime } from "../_shared/clock.ts";
+import { DEFAULT_TZ, getLocalDateTime, getUKDateTime, toUtcIso } from "../_shared/clock.ts";
 
 const SUPABASE_URL = Deno.env.get("SUPABASE_URL")!;
 const SUPABASE_SERVICE_ROLE_KEY = Deno.env.get("SUPABASE_SERVICE_ROLE_KEY")!;
@@ -81,9 +81,12 @@ function findNextOpen(openingHours: any[], holidayHours: any[], fromISO: string)
 }
 
 // deno-lint-ignore no-explicit-any
-function getPracticeHoursStatus(openingHours: any[], holidayHours: any[]) {
+function getPracticeHoursStatus(openingHours: any[], holidayHours: any[], tz: string = DEFAULT_TZ) {
+  // Compute "is the practice open right now" in the practice's own tz, not
+  // a hard-coded one. Same code, parameterised — so an Edinburgh GP and a
+  // Dublin clinic each get correct "open now" reads.
   const now = new Date();
-  const fmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", weekday: "long", hour: "2-digit", minute: "2-digit", hour12: false });
+  const fmt = new Intl.DateTimeFormat("en-GB", { timeZone: tz, weekday: "long", hour: "2-digit", minute: "2-digit", hour12: false });
   const parts = fmt.formatToParts(now);
   const weekday = parts.find(p => p.type === "weekday")?.value || "";
   const hour = parseInt(parts.find(p => p.type === "hour")?.value || "0");
@@ -91,7 +94,7 @@ function getPracticeHoursStatus(openingHours: any[], holidayHours: any[]) {
   const currentMinutes = hour * 60 + minute;
   const timeStr = `${String(hour).padStart(2, "0")}:${String(minute).padStart(2, "0")}`;
 
-  const dfmt = new Intl.DateTimeFormat("en-GB", { timeZone: "Europe/London", year: "numeric", month: "2-digit", day: "2-digit" });
+  const dfmt = new Intl.DateTimeFormat("en-GB", { timeZone: tz, year: "numeric", month: "2-digit", day: "2-digit" });
   const dp = dfmt.formatToParts(now);
   const todayISO = `${dp.find(p => p.type === "year")?.value}-${dp.find(p => p.type === "month")?.value}-${dp.find(p => p.type === "day")?.value}`;
 
@@ -143,7 +146,7 @@ function buildPracticeBase(practice: any) {
     success: true, practice_id: practice.id, practice_name: practice.name,
     practice_email: practice.email || integrations.email_from || null,
     practice_phone: practice.phone, practice_website: practice.website,
-    practice_hours: getPracticeHoursStatus(practice.opening_hours, practice.holiday_hours),
+    practice_hours: getPracticeHoursStatus(practice.opening_hours, practice.holiday_hours, practice.timezone || DEFAULT_TZ),
     practice_usps: practice.usps || null,
     practice_plan: practice.practice_plan?.offered ? practice.practice_plan.terms : null,
     clinic_guidelines: practice.clinic_guidelines || null,
@@ -208,12 +211,19 @@ async function getConversationHistory(db: DB, opts: { contactId?: string; phone?
 
 // deno-lint-ignore no-explicit-any
 async function findSlots(db: DB, opts: any) {
-  const { practitioners, practice_id, totalMinutes, preference_day, preference_time, preference_date, openingHours, holidayHours, searchDays } = opts;
+  const { practitioners, practice_id, totalMinutes, preference_day, preference_time, preference_date, openingHours, holidayHours, searchDays, tz: tzOpt } = opts;
+  const tz = tzOpt || DEFAULT_TZ;
   const days = ["Sunday", "Monday", "Tuesday", "Wednesday", "Thursday", "Friday", "Saturday"];
   // deno-lint-ignore no-explicit-any
   const slots: any[] = [];
-  const clock = getUKDateTime();
+  const clock = getLocalDateTime(tz);
   const todayDate = new Date(clock.date_iso + "T12:00:00Z");
+  // Pull LOCAL HH:MM out of a UTC timestamp from the DB. The previous
+  // a.starts_at.slice(11,16) returned UTC chars and silently double-booked
+  // local-time slots during BST. Use this every time we compare a stored
+  // timestamp's *time-of-day* against opening-hours/working-hours minutes.
+  const hmmFmt = new Intl.DateTimeFormat("en-GB", { timeZone: tz, hour: "2-digit", minute: "2-digit", hour12: false });
+  const localHMM = (utc: string): string => hmmFmt.format(new Date(utc));
 
   // Single query for entire window
   const startRange = new Date(todayDate.getTime() + 86400000).toISOString().slice(0, 10);
@@ -246,7 +256,7 @@ async function findSlots(db: DB, opts: any) {
       const endMin = timeToMinutes(wh?.end_time || dayHours.close_time);
       const bufferMins = opts.service?.buffer_minutes || 10;
       const blocked = (existing || []).filter((a: { practitioner_id: string }) => a.practitioner_id === prac.id)
-        .map((a: { starts_at: string; ends_at: string }) => ({ start: timeToMinutes(a.starts_at.slice(11, 16)), end: timeToMinutes(a.ends_at.slice(11, 16)) + bufferMins }));
+        .map((a: { starts_at: string; ends_at: string }) => ({ start: timeToMinutes(localHMM(a.starts_at)), end: timeToMinutes(localHMM(a.ends_at)) + bufferMins }));
 
       for (let t = startMin; t + totalMinutes <= endMin; t += 15) {
         const slotEnd = t + totalMinutes;
@@ -495,7 +505,7 @@ async function handleSearchAvailability(db: DB, args: any) {
 
   // Practice hours + service match in parallel
   const [practiceResult, serviceResult] = await Promise.all([
-    db.from("practices").select("opening_hours, holiday_hours").eq("id", practice_id).single(),
+    db.from("practices").select("opening_hours, holiday_hours, timezone").eq("id", practice_id).single(),
     db.from("services").select("id, name, duration_minutes, buffer_minutes, price_pence, notes").eq("practice_id", practice_id).ilike("name", `%${service_name}%`).limit(1),
   ]);
 
@@ -532,8 +542,9 @@ async function handleSearchAvailability(db: DB, args: any) {
 
   if (practitioners.length === 0) return { success: true, slots: [], service_id: service.id, message: "No practitioners available for this service." };
 
-  let slots = await findSlots(db, { practitioners, practice_id, service, totalMinutes, preference_day, preference_time, preference_date, openingHours: practice.opening_hours || [], holidayHours: practice.holiday_hours || [], searchDays: is_urgent ? 3 : 14 });
-  if (is_urgent && slots.length === 0) slots = await findSlots(db, { practitioners, practice_id, service, totalMinutes, preference_day, preference_time, preference_date, openingHours: practice.opening_hours || [], holidayHours: practice.holiday_hours || [], searchDays: 5 });
+  const tz = practice.timezone || DEFAULT_TZ;
+  let slots = await findSlots(db, { practitioners, practice_id, service, totalMinutes, preference_day, preference_time, preference_date, openingHours: practice.opening_hours || [], holidayHours: practice.holiday_hours || [], searchDays: is_urgent ? 3 : 14, tz });
+  if (is_urgent && slots.length === 0) slots = await findSlots(db, { practitioners, practice_id, service, totalMinutes, preference_day, preference_time, preference_date, openingHours: practice.opening_hours || [], holidayHours: practice.holiday_hours || [], searchDays: 5, tz });
 
   // Rank: prefer last practitioner, then soonest
   const lastPracId = lastApptResult.data?.practitioner_id || null;
@@ -606,15 +617,16 @@ async function handleRequestAppointment(db: DB, args: any) {
 
   // Fetch all needed data in parallel
   const [practiceResult, serviceResult, contactResult] = await Promise.all([
-    db.from("practices").select("name, opening_hours, holiday_hours, messaging_service_sid, twilio_sms_number, integrations").eq("id", practice_id).single(),
+    db.from("practices").select("name, opening_hours, holiday_hours, messaging_service_sid, twilio_sms_number, integrations, timezone").eq("id", practice_id).single(),
     service_id ? db.from("services").select("name, patient_instructions").eq("id", service_id).single() : Promise.resolve({ data: null }),
     contact_id ? db.from("contacts").select("phone, email, name").eq("id", contact_id).single() : Promise.resolve({ data: null }),
   ]);
 
   const practice = practiceResult.data;
+  const practiceTz = practice?.timezone || DEFAULT_TZ;
   const serviceData = serviceResult.data;
   const contactData = contactResult.data;
-  const hoursStatus = practice ? getPracticeHoursStatus(practice.opening_hours, practice.holiday_hours) : { is_open_now: false };
+  const hoursStatus = practice ? getPracticeHoursStatus(practice.opening_hours, practice.holiday_hours, practiceTz) : { is_open_now: false };
   const outsideHours = !hoursStatus.is_open_now;
   const serviceName = serviceData?.name || "Appointment";
 
@@ -635,9 +647,15 @@ async function handleRequestAppointment(db: DB, args: any) {
 
   if (error) return { success: false, message: "Failed to create appointment request." };
 
-  // Conflict check + insert appointment
+  // Conflict check + insert appointment.
+  // slot.{date,start_time,end_time} are the LOCAL wall-clock the patient
+  // agreed on (e.g. "2026-05-26" + "09:00" in BST). Convert to UTC via
+  // toUtcIso(...practiceTz) before writing OR comparing — otherwise Postgres
+  // ingests the naive string as UTC and the booking lands an hour off
+  // during BST (and silently passes QA in winter when GMT=UTC).
   if (hasSlot) {
-    const slotStart = `${slot.date}T${slot.start_time}:00`, slotEnd = `${slot.date}T${slot.end_time || slot.start_time}:00`;
+    const slotStart = toUtcIso(slot.date, slot.start_time, practiceTz);
+    const slotEnd = toUtcIso(slot.date, slot.end_time || slot.start_time, practiceTz);
     let hasConflict = false;
     if (slot.practitioner_id) {
       const { data: conflicts } = await db.from("appointments").select("id").eq("practitioner_id", slot.practitioner_id).neq("status", "cancelled").lt("starts_at", slotEnd).gt("ends_at", slotStart).limit(1);
