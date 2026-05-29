@@ -177,11 +177,14 @@ Deno.serve(async (req) => {
             db,
             practiceId: practice.id,
           });
+          /* Persist the reply BEFORE attempting dispatch — see the same
+             reordering in textmagic-webhook. A transient sendSms throw
+             previously erased the AI's reply from the dashboard entirely. */
+          await appendReplyToEnquiry(db, enquiryId, aiReply, "sms");
           const sent = await sendSms(fullPractice, from, aiReply);
           console.log(
             `[TWILIO SMS] AI replied via ${sent.provider} | id=${sent.messageId} | status=${sent.status}`,
           );
-          await appendReplyToEnquiry(db, enquiryId, aiReply, "sms");
         } catch (e) {
           console.error("[TWILIO SMS] AI auto-reply failed:", e);
         }

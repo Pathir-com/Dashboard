@@ -235,12 +235,19 @@ Deno.serve(async (req) => {
         practiceId: practice.id,
       });
 
+      /* Persist the AI reply BEFORE attempting dispatch — order matters.
+         If sendSms throws (e.g. transient provider error, unreachable
+         number, rate-limit), the reply was previously dropped from the DB
+         entirely and operators couldn't even see what the AI had said.
+         Now: the reply is always visible in enquiry_messages; only the
+         outbound delivery may fail and is logged separately. */
+      await appendReplyToEnquiry(db, enquiryId, aiReply, "sms");
+
       try {
         const sent = await sendSms(practice, from, aiReply);
         console.log(
           `[TEXTMAGIC WEBHOOK] Replied via ${sent.provider} | id=${sent.messageId} | status=${sent.status}`,
         );
-        await appendReplyToEnquiry(db, enquiryId, aiReply, "sms");
 
         if (conv) {
           await db
