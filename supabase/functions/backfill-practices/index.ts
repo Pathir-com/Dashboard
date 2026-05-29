@@ -99,6 +99,37 @@ Deno.serve(async (req) => {
       // 1. Catalog
       entry.catalog = await ensureBookableCatalog(db, p);
 
+      /* 1a. Practitioner-service links. catalog.ts ensure only seeds the
+         link for practitioners IT creates; pre-existing practices with
+         hand-loaded services + practitioners can be missing the join,
+         which breaks search_availability's "who-does-this-service" lookup
+         (it falls back to most-senior, but the explicit link is the
+         contract). Backfill links for every service that has none. */
+      const { data: orphanedSvcs } = await db
+        .from("services")
+        .select("id, name")
+        .eq("practice_id", p.id);
+      const { data: practitioners } = await db
+        .from("practitioners")
+        .select("id")
+        .eq("practice_id", p.id)
+        .order("sort_order", { ascending: true });
+      if ((orphanedSvcs || []).length > 0 && (practitioners || []).length > 0) {
+        const { data: existingLinks } = await db
+          .from("practitioner_services")
+          .select("service_id")
+          .in("service_id", orphanedSvcs!.map((s: { id: string }) => s.id));
+        const linkedIds = new Set((existingLinks || []).map((l: { service_id: string }) => l.service_id));
+        const toLink = orphanedSvcs!.filter((s: { id: string }) => !linkedIds.has(s.id));
+        if (toLink.length > 0) {
+          const lead = practitioners![0].id;
+          await db.from("practitioner_services").insert(
+            toLink.map((s: { id: string }) => ({ practitioner_id: lead, service_id: s.id })),
+          );
+          entry.practitioner_links_added = toLink.length;
+        }
+      }
+
       /* 1b. Missing agent — provision one. Older practices that finished
          onboarding in the fire-and-forget era (e.g. Baker Street) have
          elevenlabs_agent_id = "" and never got an agent. Create one so the

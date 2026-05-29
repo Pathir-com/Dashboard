@@ -78,13 +78,36 @@ export async function ensureBookableCatalog(
   if (!result.already_had_practitioners) {
     const titles = (tpl?.practitioner_titles as string[]) || ["Dr"];
     const roleLabels = (tpl?.practitioner_role_labels as string[]) || ["Clinician"];
-    const { error } = await db.from("practitioners").insert({
+    /* Seed working_hours mirroring the practice's opening_hours so
+       search_availability has a per-practitioner schedule (not just the
+       fallback to practice hours). Days the practice is open → working,
+       same open/close times. */
+    const openingHours = (practice.opening_hours || []) as Array<{ day: string; is_open?: boolean; open_time?: string; close_time?: string }>;
+    const workingHours = openingHours.map((h) => ({
+      day: h.day,
+      is_working: !!h.is_open,
+      start_time: h.open_time || "09:00",
+      end_time: h.close_time || "17:00",
+    }));
+
+    const { data: prac, error } = await db.from("practitioners").insert({
       practice_id: practice.id,
       name: `Lead ${roleLabels[0] || "Clinician"}`,
       title: titles[0] || "",
       sort_order: 1,
-    });
-    if (!error) result.seeded_practitioner = true;
+      working_hours: workingHours,
+    }).select("id").single();
+    if (!error && prac) {
+      result.seeded_practitioner = true;
+
+      /* Link the seeded practitioner to ALL services so search_availability
+         can find them. Without this link the resolver falls back to
+         "most senior" which works, but the explicit link is the contract
+         the rest of the system relies on (e.g. UI shows who-does-what). */
+      const { data: allServices } = await db.from("services").select("id").eq("practice_id", practice.id);
+      const links = (allServices || []).map((s: { id: string }) => ({ practitioner_id: prac.id, service_id: s.id }));
+      if (links.length > 0) await db.from("practitioner_services").insert(links);
+    }
   }
 
   return result;
