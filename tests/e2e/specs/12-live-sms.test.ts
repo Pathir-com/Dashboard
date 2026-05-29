@@ -75,15 +75,63 @@ async function pollInboundFor(patient: string, sinceIso: string, alreadySeen: Se
   return null;
 }
 
-/* Deterministic patient. Pattern-matches the agent's last reply, chooses
-   the next thing to say. Replace with a Claude/GPT call when a key lands;
-   the contract is identical (last reply in, next text out). */
-function nextPatientReply(agentText: string): { text: string; done: boolean } {
+/* Patient brain — tries Claude (ANTHROPIC_API_KEY) → GPT (OPENAI_API_KEY)
+   → scripted fallback. No SDK; both APIs are plain HTTP. Drop either key
+   in env and the test "upgrades" itself to a natural LLM-driven patient.
+   The contract is the same in all three modes: full chat so far in, next
+   patient text + done flag out. */
+const PATIENT_PERSONA = `You are Sam Rivers, a patient texting a dental clinic to book an appointment. Goal: get a routine check-up booked for next Friday morning. If asked your name, say Sam Rivers; DOB 3rd March 1990. When a specific slot is offered, accept it ("Yes please book that one"). Once the clinic confirms it's booked, reply "Thank you, goodbye!" and stop. One short SMS-style sentence per reply. Reply with JUST the text you would send — no labels, no quotes, no explanation.`;
+
+interface ChatTurn { role: "clinic" | "patient"; text: string }
+
+async function claudeTurn(history: ChatTurn[]): Promise<string | null> {
+  const key = process.env.ANTHROPIC_API_KEY;
+  if (!key) return null;
+  const messages = history.map((t) => ({ role: t.role === "patient" ? "assistant" : "user", content: t.text }));
+  if (messages[0]?.role !== "user") messages.unshift({ role: "user", content: "(start)" });
+  const r = await fetch("https://api.anthropic.com/v1/messages", {
+    method: "POST",
+    headers: { "x-api-key": key, "anthropic-version": "2023-06-01", "content-type": "application/json" },
+    body: JSON.stringify({ model: "claude-haiku-4-5-20251001", max_tokens: 100, system: PATIENT_PERSONA, messages }),
+  });
+  if (!r.ok) { console.log(`[patient-brain] claude ${r.status}: ${(await r.text()).slice(0, 120)}`); return null; }
+  const d = await r.json() as { content: Array<{ text: string }> };
+  return d.content?.[0]?.text?.trim() || null;
+}
+
+async function gptTurn(history: ChatTurn[]): Promise<string | null> {
+  const key = process.env.OPENAI_API_KEY;
+  if (!key) return null;
+  const messages: any[] = [{ role: "system", content: PATIENT_PERSONA }];
+  for (const t of history) messages.push({ role: t.role === "patient" ? "assistant" : "user", content: t.text });
+  const r = await fetch("https://api.openai.com/v1/chat/completions", {
+    method: "POST",
+    headers: { Authorization: `Bearer ${key}`, "content-type": "application/json" },
+    body: JSON.stringify({ model: "gpt-4o-mini", max_tokens: 100, messages }),
+  });
+  if (!r.ok) { console.log(`[patient-brain] gpt ${r.status}: ${(await r.text()).slice(0, 120)}`); return null; }
+  const d = await r.json() as { choices: Array<{ message: { content: string } }> };
+  return d.choices?.[0]?.message?.content?.trim() || null;
+}
+
+function scriptedTurn(agentText: string): string {
   const t = (agentText || "").toLowerCase();
-  if (/booked|confirmed|all set|booked in/.test(t)) return { text: "Thank you, goodbye!", done: true };
-  if (/another|different time|alternative|earliest|how about|works for you|at \d|noon|morning|afternoon/.test(t)) return { text: "Yes, please book that one.", done: false };
-  if (/name|date of birth|dob|details|who/.test(t)) return { text: "Sam Rivers, 3rd March 1990.", done: false };
-  return { text: "Yes please go ahead.", done: false };
+  if (/booked|confirmed|all set|booked in/.test(t)) return "Thank you, goodbye!";
+  if (/another|different time|alternative|earliest|how about|works for you|at \d|noon|morning|afternoon/.test(t)) return "Yes, please book that one.";
+  if (/name|date of birth|dob|details|who/.test(t)) return "Sam Rivers, 3rd March 1990.";
+  return "Yes please go ahead.";
+}
+
+async function nextPatientReply(history: ChatTurn[]): Promise<{ text: string; done: boolean; brain: string }> {
+  const last = history.findLast?.((t) => t.role === "clinic")?.text || "";
+  const text =
+    (await claudeTurn(history)) ??
+    (await gptTurn(history)) ??
+    scriptedTurn(last);
+  const brain = process.env.ANTHROPIC_API_KEY ? "claude" : process.env.OPENAI_API_KEY ? "gpt" : "scripted";
+  // "Done" is decided by content not source — same termination rule whichever brain spoke.
+  const done = /goodbye|^thank you[!.]*$|^thanks[!.]*$/i.test(text.trim());
+  return { text, done, brain };
 }
 
 describe(`Live two-way SMS [${runId()}]`, () => {
@@ -101,15 +149,16 @@ describe(`Live two-way SMS [${runId()}]`, () => {
 
     // ── 2. Multi-turn loop ──
     const seen = new Set<string>();
-    let lastReply = "";
+    const history: ChatTurn[] = [{ role: "patient", text: opening }];
     for (let turn = 0; turn < 6; turn++) {
       const reply = await pollInboundFor(PATIENT, testStart, seen, 90_000);
       if (!reply) { console.log(`[12-live-sms] no reply within 90s on turn ${turn}`); break; }
-      lastReply = reply.body;
+      history.push({ role: "clinic", text: reply.body });
       console.log(`[12-live-sms] turn ${turn}: agent → ${reply.body.slice(0, 80)}`);
-      const next = nextPatientReply(reply.body);
+      const next = await nextPatientReply(history);
       await twilioSend(PATIENT, SPARK_SMS, next.text);
-      console.log(`[12-live-sms] turn ${turn}: patient → ${next.text}`);
+      history.push({ role: "patient", text: next.text });
+      console.log(`[12-live-sms] turn ${turn}: [${next.brain}] patient → ${next.text}`);
       if (next.done) break;
     }
 
