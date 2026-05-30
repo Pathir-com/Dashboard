@@ -110,12 +110,19 @@ export async function getAiReply(opts: AiReplyOptions): Promise<string> {
     console.warn("[AI REPLY] fresh-prompt build failed, falling back to provisioned prompt:", e);
   }
 
+  /* SMS gets to call the booking tools — voice has them too. The other
+     text channels (Meta, web chat) still get tools stripped because they
+     have less identity anchoring (no carrier-verified caller-id) and the
+     request_appointment SMS-channel guard isn't tested for them yet.
+     Adding new channels here should mirror the guard in handleRequestAppointment. */
+  const allowTools = opts.channel === "sms";
   try {
     const reply = await fetchAgentReply(
       agentId,
       message,
       promptOverride,
       opts.timeoutMs ?? 15000,
+      allowTools,
     );
     if (reply && reply.trim().length > 0) return reply.trim();
   } catch (e) {
@@ -256,6 +263,7 @@ async function fetchAgentReply(
   userMessage: string,
   promptOverride: string | null,
   timeoutMs: number,
+  allowTools: boolean = false,
 ): Promise<string | null> {
   const urlRes = await fetch(
     `https://api.elevenlabs.io/v1/convai/conversation/get_signed_url?agent_id=${agentId}`,
@@ -298,12 +306,14 @@ async function fetchAgentReply(
           agent: {
             prompt: {
               prompt: promptOverride,
-              // Clear voice-only tools for text channels — the provisioned
-              // tools (lookup_caller_phone, search_availability, etc.) tell
-              // the LLM to deflect questions to a tool call, which is the
-              // wrong behaviour for SMS / chat / Meta. Empty tools list
-              // forces the model to answer from the prompt's catalog.
-              tools: [],
+              /* Tool inclusion is channel-decided: SMS keeps the
+                 provisioned tools (lookup_caller_phone, search_availability,
+                 request_appointment, end_call, …) so it can fully book.
+                 Meta / web chat get an empty list because their identity
+                 anchoring is weaker — they answer from the catalog only.
+                 request_appointment has its own per-channel verification
+                 guard that blocks booking until name + DOB confirmed. */
+              ...(allowTools ? {} : { tools: [] }),
             },
             first_message: "",
             language: "en",

@@ -578,7 +578,8 @@ async function handleSearchAvailability(db: DB, args: any) {
 // deno-lint-ignore no-explicit-any
 async function handleRequestAppointment(db: DB, args: any) {
   let { practice_id, agent_id, contact_id, service_id, chosen_slot, is_urgent = false, notes, enquiry_id,
-        slot_practitioner_id, slot_date, slot_start_time, slot_end_time, slot_practitioner_name } = args;
+        slot_practitioner_id, slot_date, slot_start_time, slot_end_time, slot_practitioner_name,
+        preferred_location } = args;
 
   // Accept flat slot fields
   if (slot_date && slot_start_time && (!chosen_slot || !chosen_slot.date)) {
@@ -636,6 +637,28 @@ async function handleRequestAppointment(db: DB, args: any) {
   const status = hasSlot ? "confirmed" : (is_urgent ? "asap" : "pending");
   const requestNotes = [notes || "", outsideHours ? "[Submitted outside practice hours]" : ""].filter(Boolean).join(" ").trim() || null;
 
+  /* Per-channel identity guard. Voice has caller-id as a verified identity
+     anchor; SMS doesn't. So for SMS-source bookings we require the contact
+     to have BOTH a non-generic name and a DOB on file before request_appointment
+     commits — these are populated by verify_identity. If missing, return a
+     "please verify" response so the agent asks for the details and tries
+     again. Same code path for voice but voice always has these by the time
+     it gets here (verify_identity is naturally invoked during a call). */
+  if (hasSlot && enquiry_id && contactData) {
+    const { data: enq } = await db.from("enquiries").select("source").eq("id", enquiry_id).single();
+    const channel = enq?.source || "phone";
+    const GENERIC = new Set(["", "new patient", "unknown", "new caller", "unknown caller"]);
+    const nameOk = !!contactData.name && !GENERIC.has(contactData.name.toLowerCase());
+    const dobOk = !!contactData.date_of_birth;
+    if (channel === "sms" && (!nameOk || !dobOk)) {
+      return {
+        success: false,
+        requires_verification: true,
+        message: "Before I can book that, could you confirm your full name and date of birth? I just need to verify the appointment is on the right record.",
+      };
+    }
+  }
+
   // Insert appointment request
   const { data: request, error } = await db.from("appointment_requests").insert({
     practice_id, contact_id: contact_id || null, service_id: service_id || null, is_urgent, status,
@@ -665,7 +688,7 @@ async function handleRequestAppointment(db: DB, args: any) {
       await db.from("appointment_requests").update({ status: "pending", confirmed_at: null }).eq("id", request.id);
       return { success: true, request_id: request.id, status: "pending", enquiry_id, message: "That slot was just taken. Let me find the next available slot — would you like me to check?" };
     }
-    await db.from("appointments").insert({ practice_id, practitioner_id: slot.practitioner_id || null, service_id: service_id || null, contact_id: contact_id || null, starts_at: slotStart, ends_at: slotEnd, status: "confirmed", source: "phone", notes: requestNotes });
+    await db.from("appointments").insert({ practice_id, practitioner_id: slot.practitioner_id || null, service_id: service_id || null, contact_id: contact_id || null, starts_at: slotStart, ends_at: slotEnd, status: "confirmed", source: "phone", notes: requestNotes, location: preferred_location || null });
   }
 
   // All post-booking side effects in parallel
