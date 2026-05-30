@@ -1,0 +1,41 @@
+# Project-level Supabase config. Per-function settings live here so a
+# `supabase functions deploy` (or the deploy.yml workflow) honours them on
+# every redeploy — without this, Vonage + SignalWire repeatedly drifted
+# back to verify_jwt=true and locked real providers out with 401s.
+#
+# All provider webhooks: PUBLIC (no JWT). They authenticate via their own
+# in-function HMAC/secret checks where needed (e.g. chatbase). Internal /
+# admin functions keep verify_jwt=true by default.
+
+[functions.twilio-sms-webhook]
+verify_jwt = false
+
+[functions.textmagic-webhook]
+verify_jwt = false
+
+[functions.vonage-webhook]
+verify_jwt = false
+
+[functions.signalwire-webhook]
+verify_jwt = false
+
+[functions.meta-webhook]
+verify_jwt = false
+
+[functions.vapi-webhook]
+verify_jwt = false
+
+[functions.elevenlabs-webhook]
+verify_jwt = false
+
+[functions.chatbase-webhook]
+verify_jwt = false
+
+[functions.elevenlabs-conversation]
+verify_jwt = false
+
+[functions.elevenlabs-tool]
+verify_jwt = false
+
+[functions.textmagic-status]
+verify_jwt = false
