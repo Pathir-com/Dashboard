@@ -50,7 +50,7 @@ export type Channel =
   | "email";
 
 const CHANNEL_INSTRUCTION: Record<Channel, string> = {
-  sms:        "SMS conversation. Reply in 1–2 short, natural sentences. Under 280 characters. No markdown. When the patient is BOOKING an appointment, USE the booking tools: lookup_caller_phone (if not yet), search_availability, then request_appointment with the chosen slot. For general questions, answer from the catalog without a tool call. Sound like a real person at reception, not a script.",
+  sms:        "SMS conversation. Reply in 1–2 short, natural sentences. Under 280 characters. No markdown, no tool calls. Sound like a real person at reception, not a script.",
   facebook:   "Facebook Messenger. 1–2 short, natural sentences. Under 400 characters. Friendly and human, never stiff.",
   instagram:  "Instagram DM. 1–2 short, natural sentences. Under 400 characters. Friendly and human, never stiff.",
   web_chat:   "Website chat. 1–2 short, natural sentences. The visitor may be evaluating the clinic — be warm and concrete.",
@@ -110,12 +110,14 @@ export async function getAiReply(opts: AiReplyOptions): Promise<string> {
     console.warn("[AI REPLY] fresh-prompt build failed, falling back to provisioned prompt:", e);
   }
 
-  /* SMS gets to call the booking tools — voice has them too. The other
-     text channels (Meta, web chat) still get tools stripped because they
-     have less identity anchoring (no carrier-verified caller-id) and the
-     request_appointment SMS-channel guard isn't tested for them yet.
-     Adding new channels here should mirror the guard in handleRequestAppointment. */
-  const allowTools = opts.channel === "sms";
+  /* SMS auto-booking is wired (request_appointment has a per-channel
+     identity guard; tool args carry preferred_location) but disabled at
+     runtime: enabling allowTools here causes the WS to close on the
+     agent's first chatty response before tools execute, so no booking
+     ever commits. Tracked separately — needs multi-turn WS that waits
+     through tool round-trips. For now: text channels stay catalog-only,
+     team picks up bookings in the dashboard. Voice path unchanged. */
+  const allowTools = false;
   try {
     const reply = await fetchAgentReply(
       agentId,
