@@ -50,7 +50,7 @@ export type Channel =
   | "email";
 
 const CHANNEL_INSTRUCTION: Record<Channel, string> = {
-  sms:        "SMS conversation. Reply in 1–2 short, natural sentences. Under 280 characters. No markdown, no tool calls. Sound like a real person at reception, not a script.",
+  sms:        "SMS conversation. Reply in 1–2 short, natural sentences. Under 280 characters. No markdown. When the patient is BOOKING an appointment, USE the booking tools: lookup_caller_phone (if not yet), search_availability, then request_appointment with the chosen slot. For general questions, answer from the catalog without a tool call. Sound like a real person at reception, not a script.",
   facebook:   "Facebook Messenger. 1–2 short, natural sentences. Under 400 characters. Friendly and human, never stiff.",
   instagram:  "Instagram DM. 1–2 short, natural sentences. Under 400 characters. Friendly and human, never stiff.",
   web_chat:   "Website chat. 1–2 short, natural sentences. The visitor may be evaluating the clinic — be warm and concrete.",
