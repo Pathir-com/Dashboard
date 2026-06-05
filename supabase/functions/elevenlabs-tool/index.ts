@@ -494,6 +494,11 @@ async function handleUpdateAddress(db: DB, args: any) {
 
 // deno-lint-ignore no-explicit-any
 async function handleSearchAvailability(db: DB, args: any) {
+  console.log("[search_availability] ARGS:", JSON.stringify({
+    practice_id: args.practice_id, agent_id: args.agent_id, contact_id: args.contact_id, enquiry_id: args.enquiry_id,
+    service_name: args.service_name, preference_day: args.preference_day, preference_time: args.preference_time,
+    preference_date: args.preference_date, preferred_location: args.preferred_location, is_urgent: args.is_urgent,
+  }));
   let { practice_id, agent_id, service_name, preference_day, preference_time, preference_date, is_urgent, contact_id, enquiry_id, preferred_location } = args;
   if (!service_name) return { success: false, message: "Missing service name." };
 
@@ -597,6 +602,13 @@ async function handleSearchAvailability(db: DB, args: any) {
 
 // deno-lint-ignore no-explicit-any
 async function handleRequestAppointment(db: DB, args: any) {
+  console.log("[request_appointment] ARGS:", JSON.stringify({
+    practice_id: args.practice_id, agent_id: args.agent_id, contact_id: args.contact_id,
+    service_id: args.service_id, enquiry_id: args.enquiry_id,
+    slot_date: args.slot_date, slot_start_time: args.slot_start_time, slot_end_time: args.slot_end_time,
+    slot_practitioner_id: args.slot_practitioner_id, preferred_location: args.preferred_location,
+    patient_name: args.patient_name, date_of_birth: args.date_of_birth,
+  }));
   let { practice_id, agent_id, contact_id, service_id, chosen_slot, is_urgent = false, notes, enquiry_id,
         slot_practitioner_id, slot_date, slot_start_time, slot_end_time, slot_practitioner_name,
         preferred_location, patient_name, date_of_birth } = args;
