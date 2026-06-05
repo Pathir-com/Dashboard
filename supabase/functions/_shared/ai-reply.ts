@@ -50,7 +50,7 @@ export type Channel =
   | "email";
 
 const CHANNEL_INSTRUCTION: Record<Channel, string> = {
-  sms:        "SMS conversation. Reply in 1–2 short, natural sentences, under 280 characters, no markdown. When the patient is BOOKING, USE the tools: lookup_caller_phone (if not yet), verify_identity if name/DOB needed, search_availability, then request_appointment with the chosen slot. For general questions, answer from the catalog without a tool call. Sound like a real person at reception, not a script.",
+  sms:        "SMS conversation. Reply in 1-2 short sentences, under 280 chars.\n\nBOOKING RULE:\nIf search_availability has returned a slot and the patient accepts/confirms that slot, you MUST call request_appointment in that same turn. Do not only say you will book it.\n\nFor SMS, do NOT call verify_identity just because name or DOB is missing. If the patient provides name and DOB while confirming the slot, pass patient_name and date_of_birth directly to request_appointment.\n\nWhen calling request_appointment, copy the chosen slot fields exactly from the prior search_availability result, and include patient_name/date_of_birth when supplied. For general questions (not booking), answer from the catalog without a tool call.",
   facebook:   "Facebook Messenger. 1–2 short, natural sentences. Under 400 characters. Friendly and human, never stiff.",
   instagram:  "Instagram DM. 1–2 short, natural sentences. Under 400 characters. Friendly and human, never stiff.",
   web_chat:   "Website chat. 1–2 short, natural sentences. The visitor may be evaluating the clinic — be warm and concrete.",

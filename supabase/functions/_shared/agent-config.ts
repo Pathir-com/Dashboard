@@ -169,7 +169,7 @@ export function buildToolDefinitions(supabaseFunctionsUrl: string) {
     {
       type: "webhook",
       name: "request_appointment",
-      description: "Book the appointment. MUST be called when the patient agrees to a slot. Copy the slot fields from search_availability result. Creates the REAL booking.",
+      description: "Book the appointment and create the REAL booking. MUST be called immediately when the patient accepts/confirms a slot returned by search_availability. For SMS, if the patient provides name and DOB in the confirmation message, pass them as patient_name and date_of_birth; do not call verify_identity first. Never respond that you will book the appointment unless you have called this tool.",
       api_schema: {
         url: `${baseUrl}?tool=request_appointment`,
         method: "POST",
