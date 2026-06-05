@@ -494,7 +494,7 @@ async function handleUpdateAddress(db: DB, args: any) {
 
 // deno-lint-ignore no-explicit-any
 async function handleSearchAvailability(db: DB, args: any) {
-  let { practice_id, agent_id, service_name, preference_day, preference_time, preference_date, is_urgent, contact_id } = args;
+  let { practice_id, agent_id, service_name, preference_day, preference_time, preference_date, is_urgent, contact_id, enquiry_id, preferred_location } = args;
   if (!service_name) return { success: false, message: "Missing service name." };
 
   // Resolve practice by agent_id (system var on phone calls) if the LLM
@@ -562,6 +562,26 @@ async function handleSearchAvailability(db: DB, args: any) {
 
   // deno-lint-ignore no-explicit-any
   const cleanSlots = ranked.map((s: any) => ({ practitioner_id: s.practitioner_id, practitioner_name: s.practitioner_name, date: s.date, start_time: s.start_time, end_time: s.end_time, display: s.display }));
+
+  /* Persist the offered slot on the enquiry so the next SMS turn (fresh
+     ConvAI WS, no in-agent memory of this tool call) can read structured
+     slot fields and call request_appointment without re-running search.
+     Codex round 3 diagnosed this as the root cause of SMS booking loops. */
+  if (recommended && enquiry_id) {
+    await db.from("enquiries").update({
+      last_offered_slot: {
+        slot_date: recommended.date,
+        slot_start_time: recommended.start_time,
+        slot_end_time: recommended.end_time,
+        practitioner_id: recommended.practitioner_id,
+        practitioner_name: recommended.practitioner_name,
+        service_id: service.id,
+        service_name: service.name,
+        preferred_location: preferred_location || null,
+        offered_at: new Date().toISOString(),
+      },
+    }).eq("id", enquiry_id);
+  }
 
   return { success: true, slots: cleanSlots,
     recommended_slot: recommended ? { display: recommended.display, practitioner_name: recommended.practitioner_name, date: recommended.date, start_time: recommended.start_time, reason: recommendReason } : null,
@@ -709,6 +729,10 @@ async function handleRequestAppointment(db: DB, args: any) {
       return { success: true, request_id: request.id, status: "pending", enquiry_id, message: "That slot was just taken. Let me find the next available slot — would you like me to check?" };
     }
     await db.from("appointments").insert({ practice_id, practitioner_id: slot.practitioner_id || null, service_id: service_id || null, contact_id: contact_id || null, starts_at: slotStart, ends_at: slotEnd, status: "confirmed", source: "phone", notes: requestNotes, location: preferred_location || null });
+    // Slot consumed — clear pending state so a later turn doesn't re-book it.
+    if (enquiry_id) {
+      await db.from("enquiries").update({ last_offered_slot: null }).eq("id", enquiry_id);
+    }
   }
 
   // All post-booking side effects in parallel

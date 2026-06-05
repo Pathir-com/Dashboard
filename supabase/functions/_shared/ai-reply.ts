@@ -198,6 +198,44 @@ async function buildFreshPrompt(opts: BuildPromptOptions): Promise<string> {
     ? `\nRECENT CONVERSATION HISTORY (most recent first):\n${opts.conversationHistory}\n`
     : "";
 
+  /* PENDING_OFFERED_SLOT block — the slot search_availability returned on
+     a prior turn, persisted on the enquiry. Without this, each fresh
+     ConvAI WebSocket has no structured slot data and the LLM can't call
+     request_appointment on the confirmation turn — it'd have to re-search.
+     Find the most recent open enquiry for this contact at this practice
+     and read its last_offered_slot JSONB. */
+  let pendingSlotBlock = "";
+  if (opts.channel === "sms" && opts.contactPhone) {
+    try {
+      // deno-lint-ignore no-explicit-any
+      const { data: enq } = await (db as any)
+        .from("enquiries")
+        .select("id, last_offered_slot")
+        .eq("practice_id", practiceId)
+        .eq("is_completed", false)
+        .gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+        .order("created_at", { ascending: false })
+        .limit(1)
+        .maybeSingle();
+      const slot = enq?.last_offered_slot;
+      if (slot) {
+        pendingSlotBlock = "\nPENDING_OFFERED_SLOT (structured — call request_appointment with these EXACT fields when the patient confirms):\n" +
+          `  enquiry_id: ${enq.id}\n` +
+          `  service_id: ${slot.service_id}\n` +
+          `  service_name: ${slot.service_name}\n` +
+          `  slot_date: ${slot.slot_date}\n` +
+          `  slot_start_time: ${slot.slot_start_time}\n` +
+          `  slot_end_time: ${slot.slot_end_time || slot.slot_start_time}\n` +
+          `  slot_practitioner_id: ${slot.practitioner_id}\n` +
+          `  slot_practitioner_name: ${slot.practitioner_name}\n` +
+          (slot.preferred_location ? `  preferred_location: ${slot.preferred_location}\n` : "") +
+          "If the patient confirms this slot in their latest message, call request_appointment with these fields immediately — do NOT ask them to repeat the slot. If they also provide name and DOB in the same message, pass them as patient_name and date_of_birth.\n";
+      }
+    } catch (e) {
+      console.warn("[AI REPLY] pending-slot lookup failed:", e instanceof Error ? e.message : e);
+    }
+  }
+
   const patientLine = opts.contactName && opts.contactName !== "Unknown"
     ? `Patient: ${opts.contactName}.`
     : "Patient name unknown — ask politely once if booking is needed (never twice).";
@@ -246,6 +284,7 @@ async function buildFreshPrompt(opts: BuildPromptOptions): Promise<string> {
     "",
     `PATIENT CONTEXT — ${patientLine}`,
     historyBlock,
+    pendingSlotBlock,
     "",
     "When the patient asks about a service (or which services you offer), ALWAYS state its exact price from SERVICES above in the same reply — don't make them ask twice. When they ask which practitioner does what, name the specific person from PRACTITIONERS above. When they ask about availability or location, reference the OPENING HOURS and LOCATIONS above. Be concrete.",
   ].filter(Boolean).join("\n");

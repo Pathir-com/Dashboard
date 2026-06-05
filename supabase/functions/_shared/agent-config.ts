@@ -160,6 +160,8 @@ export function buildToolDefinitions(supabaseFunctionsUrl: string) {
             preference_time: { type: "string", description: "morning, afternoon, or specific time like 14:00" },
             preference_date: { type: "string", description: "Specific date in YYYY-MM-DD" },
             preferred_location: { type: "string", description: "If the patient prefers a specific clinic location (multi-site practices), pass the location name they said (e.g. 'Knightsbridge'). Optional." },
+            enquiry_id: { type: "string", description: "The enquiry_id from lookup_caller_phone — pass it so the offered slot is persisted to the enquiry for the next SMS turn to read." },
+            contact_id: { type: "string", description: "The contact_id from lookup_caller_phone — pass it so the offered slot is persisted for SMS booking continuity." },
             is_urgent: { type: "boolean", description: "True if urgent" },
           },
           required: ["service_name"],
