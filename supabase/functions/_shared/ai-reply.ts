@@ -50,7 +50,7 @@ export type Channel =
   | "email";
 
 const CHANNEL_INSTRUCTION: Record<Channel, string> = {
-  sms:        "SMS conversation. Reply in 1–2 short, natural sentences. Under 280 characters. No markdown, no tool calls. Sound like a real person at reception, not a script.",
+  sms:        "SMS conversation. Reply in 1–2 short, natural sentences, under 280 characters, no markdown. When the patient is BOOKING, USE the tools: lookup_caller_phone (if not yet), verify_identity if name/DOB needed, search_availability, then request_appointment with the chosen slot. For general questions, answer from the catalog without a tool call. Sound like a real person at reception, not a script.",
   facebook:   "Facebook Messenger. 1–2 short, natural sentences. Under 400 characters. Friendly and human, never stiff.",
   instagram:  "Instagram DM. 1–2 short, natural sentences. Under 400 characters. Friendly and human, never stiff.",
   web_chat:   "Website chat. 1–2 short, natural sentences. The visitor may be evaluating the clinic — be warm and concrete.",
@@ -110,20 +110,23 @@ export async function getAiReply(opts: AiReplyOptions): Promise<string> {
     console.warn("[AI REPLY] fresh-prompt build failed, falling back to provisioned prompt:", e);
   }
 
-  /* SMS auto-booking is wired (request_appointment has a per-channel
-     identity guard; tool args carry preferred_location) but disabled at
-     runtime: enabling allowTools here causes the WS to close on the
-     agent's first chatty response before tools execute, so no booking
-     ever commits. Tracked separately — needs multi-turn WS that waits
-     through tool round-trips. For now: text channels stay catalog-only,
-     team picks up bookings in the dashboard. Voice path unchanged. */
-  const allowTools = false;
+  /* SMS now keeps its tools — request_appointment has a per-channel
+     identity guard (name + DOB required before commit on SMS-source
+     enquiries). The WS protocol waits through tool round-trips before
+     returning, so the booking actually commits before we close.
+     Meta + web chat still strip tools (their identity anchoring is
+     weaker and the guard isn't tested for them). */
+  const allowTools = opts.channel === "sms";
+  /* Tools need a longer ceiling: search_availability + request_appointment
+     can take ~6-10s each, and the LLM may emit a chatty interim response
+     before/between. 45s is the safe upper bound for a 2-tool turn. */
+  const replyTimeoutMs = opts.timeoutMs ?? (allowTools ? 45_000 : 15_000);
   try {
     const reply = await fetchAgentReply(
       agentId,
       message,
       promptOverride,
-      opts.timeoutMs ?? 15000,
+      replyTimeoutMs,
       allowTools,
     );
     if (reply && reply.trim().length > 0) return reply.trim();
@@ -281,10 +284,25 @@ async function fetchAgentReply(
     let replyText: string | null = null;
     let agentResponsesSeen = 0;
     let done = false;
+    /* When tools are allowed, the agent may emit a chatty agent_response
+       BEFORE calling a webhook tool, then a final agent_response after
+       the tool returns. Closing on the first response loses the booking
+       commit. Strategy: keep accumulating; close only after `silenceMs`
+       of quiet OR the hard `timeoutMs` cap, returning the LATEST text
+       (which is the post-tool reply). Tools-off path keeps the old
+       single-response close for speed. */
+    const silenceMs = allowTools ? 10_000 : 0;
+    let silenceTimer: ReturnType<typeof setTimeout> | null = null;
+    const armSilence = () => {
+      if (!silenceMs) return;
+      if (silenceTimer) clearTimeout(silenceTimer);
+      silenceTimer = setTimeout(() => finish(replyText), silenceMs);
+    };
     const finish = (value: string | null) => {
       if (done) return;
       done = true;
       clearTimeout(timer);
+      if (silenceTimer) clearTimeout(silenceTimer);
       try { ws.close(); } catch { /* ignore */ }
       resolve(value);
     };
@@ -341,15 +359,17 @@ async function fetchAgentReply(
         // Without override: response #1 is the auto-greeting, response #2 is the real reply
         // With override (first_message=""): response #1 IS the real reply
         const isRealReply = skipGreeting
-          ? agentResponsesSeen === 1
+          ? agentResponsesSeen >= 1
           : agentResponsesSeen >= 2;
 
         if (!isRealReply) return;
+        if (typeof text !== "string" || text.trim().length === 0) return;
 
-        if (typeof text === "string" && text.trim().length > 0) {
-          replyText = text;
-          finish(replyText);
-        }
+        // Always track the latest response. Without tools: finish now (old
+        // fast path). With tools: arm/reset the silence timer so we keep
+        // waiting through tool round-trips, finishing on the post-tool reply.
+        replyText = text;
+        if (allowTools) armSilence(); else finish(replyText);
       } else if (type === "ping") {
         // deno-lint-ignore no-explicit-any
         const eventId = (data.ping_event as any)?.event_id;
