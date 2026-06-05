@@ -187,6 +187,8 @@ export function buildToolDefinitions(supabaseFunctionsUrl: string) {
             slot_end_time: { type: "string", description: "The end_time in HH:MM" },
             slot_practitioner_name: { type: "string", description: "The practitioner name" },
             preferred_location: { type: "string", description: "The clinic location the patient chose (multi-site practices). Pass through what they said. Optional." },
+            patient_name: { type: "string", description: "Patient's full name as they stated it. REQUIRED for SMS bookings when the contact's name isn't on file yet — the handler self-verifies and writes it. Optional otherwise." },
+            date_of_birth: { type: "string", description: "Patient's date of birth in YYYY-MM-DD. REQUIRED for SMS bookings when the contact's DOB isn't on file yet — the handler self-verifies and writes it. Optional otherwise." },
             is_urgent: { type: "boolean", description: "True if urgent" },
           },
           required: ["service_id", "slot_date", "slot_start_time"],

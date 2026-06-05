@@ -579,7 +579,7 @@ async function handleSearchAvailability(db: DB, args: any) {
 async function handleRequestAppointment(db: DB, args: any) {
   let { practice_id, agent_id, contact_id, service_id, chosen_slot, is_urgent = false, notes, enquiry_id,
         slot_practitioner_id, slot_date, slot_start_time, slot_end_time, slot_practitioner_name,
-        preferred_location } = args;
+        preferred_location, patient_name, date_of_birth } = args;
 
   // Accept flat slot fields
   if (slot_date && slot_start_time && (!chosen_slot || !chosen_slot.date)) {
@@ -638,24 +638,44 @@ async function handleRequestAppointment(db: DB, args: any) {
   const requestNotes = [notes || "", outsideHours ? "[Submitted outside practice hours]" : ""].filter(Boolean).join(" ").trim() || null;
 
   /* Per-channel identity guard. Voice has caller-id as a verified identity
-     anchor; SMS doesn't. So for SMS-source bookings we require the contact
-     to have BOTH a non-generic name and a DOB on file before request_appointment
-     commits — these are populated by verify_identity. If missing, return a
-     "please verify" response so the agent asks for the details and tries
-     again. Same code path for voice but voice always has these by the time
-     it gets here (verify_identity is naturally invoked during a call). */
-  if (hasSlot && enquiry_id && contactData) {
+     anchor; SMS doesn't. For SMS-source bookings the contact must have a
+     non-generic name AND a DOB on file. If the LLM passes patient_name +
+     date_of_birth as args, we self-verify (adopt them onto the contact) so
+     the agent doesn't have to make a separate verify_identity call. If they
+     are still missing, return a directive response telling the LLM exactly
+     which tool to call next with which args. Caveat (codex flagged): stored
+     demographics ≠ this-session verification — pre-existing imports could
+     bypass this. A future tightening is a conversation-bound verified flag. */
+  if (hasSlot && enquiry_id && contact_id) {
     const { data: enq } = await db.from("enquiries").select("source").eq("id", enquiry_id).single();
     const channel = enq?.source || "phone";
-    const GENERIC = new Set(["", "new patient", "unknown", "new caller", "unknown caller"]);
-    const nameOk = !!contactData.name && !GENERIC.has(contactData.name.toLowerCase());
-    const dobOk = !!contactData.date_of_birth;
-    if (channel === "sms" && (!nameOk || !dobOk)) {
-      return {
-        success: false,
-        requires_verification: true,
-        message: "Before I can book that, could you confirm your full name and date of birth? I just need to verify the appointment is on the right record.",
-      };
+    if (channel === "sms") {
+      const GENERIC = new Set(["", "new patient", "unknown", "new caller", "unknown caller"]);
+      const needName = !contactData?.name || GENERIC.has(contactData.name.toLowerCase());
+      const needDob = !contactData?.date_of_birth;
+      if ((needName || needDob) && (patient_name || date_of_birth)) {
+        // LLM provided the missing details — adopt them onto the contact.
+        const update: Record<string, string> = {};
+        if (needName && patient_name) update.name = patient_name;
+        if (needDob && date_of_birth) update.date_of_birth = date_of_birth;
+        if (Object.keys(update).length > 0) {
+          await db.from("contacts").update(update).eq("id", contact_id);
+          // Reload so the rest of this function sees the updated row.
+          const { data: fresh } = await db.from("contacts").select("phone, email, name, date_of_birth").eq("id", contact_id).single();
+          if (fresh) Object.assign(contactData || {}, fresh);
+        }
+      }
+      const stillNeedName = !contactData?.name || GENERIC.has((contactData.name || "").toLowerCase());
+      const stillNeedDob = !contactData?.date_of_birth;
+      if (stillNeedName || stillNeedDob) {
+        return {
+          success: false,
+          requires_verification: true,
+          next_tool: "verify_identity",
+          required_args: [stillNeedName && "patient_name", stillNeedDob && "date_of_birth"].filter(Boolean),
+          message: "Before I can book this, I need to verify your details. Please tell me your full name and date of birth — then I'll book the slot.",
+        };
+      }
     }
   }
 
