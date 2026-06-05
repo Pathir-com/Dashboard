@@ -571,7 +571,16 @@ async function handleSearchAvailability(db: DB, args: any) {
   /* Persist the offered slot on the enquiry so the next SMS turn (fresh
      ConvAI WS, no in-agent memory of this tool call) can read structured
      slot fields and call request_appointment without re-running search.
-     Codex round 3 diagnosed this as the root cause of SMS booking loops. */
+     Codex round 3 diagnosed this as the root cause of SMS booking loops.
+     Auto-resolve enquiry_id from contact_id if the LLM didn't pass it —
+     the most recent open enquiry within 24h is the right target. */
+  if (recommended && !enquiry_id && contact_id) {
+    const { data: openEnq } = await db
+      .from("enquiries").select("id").eq("practice_id", practice_id).eq("contact_id", contact_id)
+      .eq("is_completed", false).gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    enquiry_id = openEnq?.id || null;
+  }
   if (recommended && enquiry_id) {
     await db.from("enquiries").update({
       last_offered_slot: {
@@ -612,6 +621,32 @@ async function handleRequestAppointment(db: DB, args: any) {
   let { practice_id, agent_id, contact_id, service_id, chosen_slot, is_urgent = false, notes, enquiry_id,
         slot_practitioner_id, slot_date, slot_start_time, slot_end_time, slot_practitioner_name,
         preferred_location, patient_name, date_of_birth } = args;
+
+  // Auto-resolve missing IDs from contact (LLM doesn't always pass enquiry_id).
+  if (!enquiry_id && contact_id && practice_id) {
+    const { data: openEnq } = await db
+      .from("enquiries").select("id").eq("practice_id", practice_id).eq("contact_id", contact_id)
+      .eq("is_completed", false).gte("created_at", new Date(Date.now() - 24 * 60 * 60 * 1000).toISOString())
+      .order("created_at", { ascending: false }).limit(1).maybeSingle();
+    enquiry_id = openEnq?.id || null;
+  }
+  // If the LLM omitted slot fields but the enquiry has a persisted offered
+  // slot, hydrate from it. Lets the agent on SMS just call request_appointment
+  // with patient_name + date_of_birth when confirming.
+  if (enquiry_id && (!slot_date || !slot_start_time || !service_id)) {
+    const { data: enq } = await db.from("enquiries").select("last_offered_slot").eq("id", enquiry_id).maybeSingle();
+    const los = enq?.last_offered_slot;
+    if (los) {
+      service_id = service_id || los.service_id;
+      slot_date = slot_date || los.slot_date;
+      slot_start_time = slot_start_time || los.slot_start_time;
+      slot_end_time = slot_end_time || los.slot_end_time || los.slot_start_time;
+      slot_practitioner_id = slot_practitioner_id || los.practitioner_id;
+      slot_practitioner_name = slot_practitioner_name || los.practitioner_name;
+      preferred_location = preferred_location || los.preferred_location || null;
+      console.log("[request_appointment] hydrated from last_offered_slot");
+    }
+  }
 
   // Accept flat slot fields
   if (slot_date && slot_start_time && (!chosen_slot || !chosen_slot.date)) {
