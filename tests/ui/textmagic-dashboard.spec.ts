@@ -98,6 +98,77 @@ test.afterAll(async () => {
   }
 });
 
+test("existing-practice variant: new patient lands in a dashboard that already has data", async ({ page }) => {
+  test.setTimeout(180_000);
+  const sb = await admin();
+  // Simulate the practice having been running for a while — pre-seed two
+  // unrelated contacts + enquiries before the new patient texts in.
+  const seedPhones = [`+44770099${Math.floor(Math.random() * 900 + 100)}`, `+44770098${Math.floor(Math.random() * 900 + 100)}`];
+  for (const ph of seedPhones) {
+    const { data: c } = await sb.from("contacts").insert({
+      practice_id: practiceId, phone: ph, name: "Existing Patient", source: "sms",
+    }).select("id").single();
+    await sb.from("enquiries").insert({
+      practice_id: practiceId, contact_id: c!.id, patient_name: "Existing Patient",
+      source: "sms", message: "Older enquiry from an existing patient", is_completed: false,
+    });
+  }
+  // A NEW patient texts in to the populated practice. PATIENT_NEW is a
+  // different fictional number so it can't clash with PATIENT from the
+  // first test.
+  const PATIENT_NEW = `+44770092${Math.floor(Math.random() * 900 + 100)}`;
+  await sb.from("sms_trial_routes").upsert({
+    user_phone: PATIENT_NEW, practice_id: practiceId,
+    expires_at: new Date(Date.now() + 24 * 60 * 60 * 1000).toISOString(),
+  }, { onConflict: "user_phone" });
+  const env = await loadEnv();
+  await fetch(`${env.SUPABASE_URL}/functions/v1/textmagic-webhook`, {
+    method: "POST",
+    headers: { "Content-Type": "application/x-www-form-urlencoded" },
+    body: new URLSearchParams({
+      sender: PATIENT_NEW, receiver: PLATFORM, text: "Hi, I'd like to book a check-up please",
+      messageId: `existing_var_${Date.now()}`,
+    }).toString(),
+  });
+  await new Promise((r) => setTimeout(r, 4_000));
+
+  // DB: at least 3 enquiries on the practice (the 2 seeded + this new one).
+  const { data: allEnqs } = await sb.from("enquiries").select("id").eq("practice_id", practiceId);
+  expect((allEnqs || []).length, "practice now has multiple enquiries (existing + new)").toBeGreaterThanOrEqual(3);
+  // The new patient is a distinct contact.
+  const { data: newPatient } = await sb.from("contacts").select("id").eq("practice_id", practiceId).eq("phone", PATIENT_NEW);
+  expect(newPatient?.length).toBe(1);
+
+  // Dashboard: log in (same owner) and verify the new conversation shows
+  // up alongside the pre-existing ones. The "X enquiries" header is the
+  // most stable proof.
+  await page.goto("/login");
+  await page.locator('input[type="email"]').fill(userEmail);
+  await page.locator('input[type="password"]').fill(PASSWORD);
+  await page.getByRole("button", { name: /sign in/i }).click();
+  await expect(page).toHaveURL(/\/Clinic/i, { timeout: 30_000 });
+  await page.getByRole("button", { name: /enquiries/i }).click();
+  await page.waitForTimeout(3_000);
+  // The dashboard should now show MULTIPLE enquiries (incl. the new one).
+  await expect(page.getByText(/enquiries/i).first()).toBeVisible({ timeout: 15_000 });
+  // The new inbound text should appear in at least one enquiry preview.
+  await expect(
+    page.getByText(/book a check-up/i).first(),
+  ).toBeVisible({ timeout: 10_000 });
+
+  // Clean up seeded contacts/enquiries.
+  for (const ph of [...seedPhones, PATIENT_NEW]) {
+    const { data: c } = await sb.from("contacts").select("id").eq("practice_id", practiceId).eq("phone", ph);
+    for (const row of c || []) {
+      const { data: enqs } = await sb.from("enquiries").select("id").eq("contact_id", row.id);
+      if (enqs && enqs.length) await sb.from("enquiry_messages").delete().in("enquiry_id", enqs.map((e) => e.id));
+      await sb.from("enquiries").delete().eq("contact_id", row.id);
+      await sb.from("contacts").delete().eq("id", row.id);
+    }
+    await sb.from("sms_trial_routes").delete().eq("user_phone", ph);
+  }
+});
+
 test("textmagic 2-way conversation appears in dashboard + returning patient continuity", async ({ page }) => {
   test.setTimeout(240_000);
   const sb = await admin();
